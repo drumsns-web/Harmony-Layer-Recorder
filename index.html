@@ -47,7 +47,7 @@ const uid = () => ++_id;
 
 // block: { id, startBar, bars, audioBuffer, durationSec }
 function makeRecTrack(n) {
-  return { id: uid(), kind:"rec", name:`Track ${n}`, blocks:[], recording:false, muted:false, soloed:false };
+  return { id: uid(), kind:"rec", name:`Track ${n}`, blocks:[], recording:false, muted:false, soloed:false, selfMonitor:false, fx:{preset:"none",wet:0.5}, fxOpen:false };
 }
 function makeImpTrack(n) {
   return { id: uid(), kind:"imp", name:`Import ${n}`, audioBuffer:null, filename:"", muted:false, soloed:false };
@@ -268,9 +268,82 @@ function TimelineRuler({totalBars, cellW}) {
   );
 }
 
+// ─── FX Presets definition ─────────────────────────────────
+const FX_PRESETS = [
+  { id:'none',     label:'なし',         group:'—'          },
+  { id:'reverb',   label:'リバーブ',     group:'空間系'      },
+  { id:'gateReverb',label:'ゲートリバーブ',group:'空間系'    },
+  { id:'delay',    label:'ディレイ',     group:'空間系'      },
+  { id:'flanger',  label:'フランジャー', group:'モジュレーション' },
+  { id:'chorus',   label:'コーラス',     group:'モジュレーション' },
+  { id:'distortion',label:'ディストーション',group:'歪み系'  },
+  { id:'lofi',     label:'Lo-Fi',        group:'歪み系'      },
+  { id:'telephone',label:'電話',         group:'フィルター系' },
+  { id:'tape',     label:'テープ',       group:'ボイスチェンジ' },
+  { id:'robot',    label:'ロボット',     group:'ボイスチェンジ' },
+  { id:'helium',   label:'ヘリウム',     group:'ボイスチェンジ' },
+  { id:'deep',     label:'ディープ',     group:'ボイスチェンジ' },
+];
+
+function FxPanel({ fx, onChangeFx, isRecording }) {
+  const groups = [...new Set(FX_PRESETS.map(p=>p.group))];
+  return (
+    <div style={{
+      background:'rgba(0,0,0,0.35)',
+      border:'1px solid rgba(200,169,110,0.15)',
+      borderRadius:10, padding:'10px 12px', marginTop:6,
+    }}>
+      {/* Live monitor badge */}
+      {isRecording && (
+        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,
+          background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.25)',
+          borderRadius:6,padding:'3px 8px',width:'fit-content'}}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:'#ef4444',
+            boxShadow:'0 0 4px #ef4444',animation:'recDot 0.75s ease-in-out infinite'}}/>
+          <span style={{fontSize:10,color:'#f87171',fontFamily:'monospace'}}>録音中リアルタイム変声ON</span>
+        </div>
+      )}
+      {/* Preset buttons grouped */}
+      <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:10}}>
+        {FX_PRESETS.map(p => (
+          <button key={p.id} onClick={()=>onChangeFx({...fx,preset:p.id})}
+            style={{
+              background: fx.preset===p.id ? 'rgba(200,169,110,0.22)' : 'rgba(255,255,255,0.04)',
+              border: fx.preset===p.id ? '1px solid rgba(200,169,110,0.5)' : '1px solid rgba(255,255,255,0.08)',
+              borderRadius:6, padding:'3px 9px',
+              color: fx.preset===p.id ? '#c8a96e' : '#4a6080',
+              fontSize:11, fontFamily:'monospace', cursor:'pointer',
+              fontWeight: fx.preset===p.id ? 700 : 400,
+              transition:'all 0.13s',
+            }}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {/* Wet knob — only show if effect is active */}
+      {fx.preset !== 'none' && (
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:10,color:'#475569',fontFamily:'monospace',minWidth:28}}>WET</span>
+          <input type='range' min={0} max={1} step={0.01} value={fx.wet}
+            onChange={e=>onChangeFx({...fx,wet:Number(e.target.value)})}
+            style={{flex:1,accentColor:'#c8a96e'}}/>
+          <span style={{fontSize:11,color:'#c8a96e',fontFamily:'monospace',minWidth:32,textAlign:'right'}}>
+            {Math.round(fx.wet*100)}%
+          </span>
+          {/* Group label */}
+          <span style={{fontSize:9,color:'#334155',fontFamily:'monospace',marginLeft:4}}>
+            {FX_PRESETS.find(p=>p.id===fx.preset)?.group}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ─── Recording Track Row with timeline ────────────────────────
 function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, countingIn, onRecord, onStop,
-  onMute, onSolo, onDelete, onDeleteBlock, micStream, playTimeSec}) {
+  onMute, onSolo, onDelete, onDeleteBlock, micStream, playTimeSec, onToggleSelfMonitor, onChangeFx, onToggleFx}) {
   const level = useLevelMeter(track.recording ? micStream : null);
   const isRec = track.recording;
 
@@ -308,7 +381,31 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
           <IBtn onClick={onMute} color={track.muted?"#fbbf24":null} title={track.muted?"ミュート解除":"ミュート"} dimColor={track.muted?"rgba(251,191,36,0.15)":null}>M</IBtn>
           <IBtn onClick={onSolo} color={track.soloed?"#facc15":null} title={track.soloed?"ソロ解除":"ソロ"} dimColor={track.soloed?"rgba(250,204,21,0.18)":null}>S</IBtn>
           <IBtn onClick={onDelete} disabled={isRec||countingIn} color="#f87171" title="トラック削除" dimColor="rgba(239,68,68,0.06)">✕</IBtn>
+          <IBtn onClick={onToggleFx} color={track.fxOpen||track.fx.preset!=='none'?"#c8a96e":null}
+            dimColor={track.fxOpen||track.fx.preset!=='none'?"rgba(200,169,110,0.12)":null}
+            title="エフェクト">FX</IBtn>
         </div>
+        {/* FX Panel */}
+        {track.fxOpen && (
+          <FxPanel fx={track.fx} onChangeFx={onChangeFx} isRecording={track.recording}/>
+        )}
+        {/* Self-monitor toggle — only relevant when track has blocks */}
+        {track.blocks.length > 0 && (
+          <button onClick={onToggleSelfMonitor}
+            title={track.selfMonitor ? "次の録音時、このトラックの前の音を鳴らす（ON）" : "次の録音時、このトラックの前の音を鳴らさない（OFF）"}
+            style={{
+              marginTop:4, width:"100%",
+              background: track.selfMonitor ? "rgba(200,169,110,0.18)" : "rgba(255,255,255,0.04)",
+              border: track.selfMonitor ? "1px solid rgba(200,169,110,0.45)" : "1px solid rgba(255,255,255,0.08)",
+              borderRadius:5, padding:"2px 0",
+              color: track.selfMonitor ? GOLD : "#334155",
+              fontSize:9, fontFamily:"monospace", fontWeight:700,
+              cursor:"pointer", letterSpacing:"0.04em",
+              transition:"all 0.15s",
+            }}>
+            {track.selfMonitor ? "♪ 前を聴く" : "✗ 前を消す"}
+          </button>
+        )}
       </div>
 
       {/* Timeline area — fixed px width so absolute coords match grid */}
@@ -369,7 +466,7 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
 }
 
 // ─── Import Track Row ─────────────────────────────────────────
-function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDelete, onClear, playTimeSec}) {
+function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDelete, onClear, playTimeSec, onChangeFx, onToggleFx}) {
   const fileRef = useRef();
   const hasAudio = !!track.audioBuffer;
 
@@ -392,7 +489,14 @@ function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDel
           <IBtn onClick={onMute} color={track.muted?"#fbbf24":null} title={track.muted?"ミュート解除":"ミュート"} dimColor={track.muted?"rgba(251,191,36,0.15)":null}>M</IBtn>
           <IBtn onClick={onSolo} color={track.soloed?"#facc15":null} title="ソロ" dimColor={track.soloed?"rgba(250,204,21,0.18)":null}>S</IBtn>
           <IBtn onClick={onDelete} color="#f87171" title="トラック削除" dimColor="rgba(239,68,68,0.06)">✕</IBtn>
+          <IBtn onClick={onToggleFx} color={track.fxOpen||track.fx.preset!=='none'?"#818cf8":null}
+            dimColor={track.fxOpen||track.fx.preset!=='none'?"rgba(99,102,241,0.12)":null}
+            title="エフェクト">FX</IBtn>
         </div>
+        {/* FX Panel */}
+        {track.fxOpen && (
+          <FxPanel fx={track.fx} onChangeFx={onChangeFx}/>
+        )}
       </div>
 
       {/* Waveform area */}
@@ -522,6 +626,8 @@ function App() {
   const mrRef = useRef(null);
   const chunksRef = useRef([]);
   const recTrackIdRef = useRef(null);
+  const monitorNodeRef = useRef(null);   // live mic monitor source
+  const monitorGainRef = useRef(null);   // gain to mute/unmute monitor
   const playbackNodesRef = useRef([]);
   const recTimerRef = useRef(null);
   const countInTimers = useRef([]);
@@ -605,6 +711,22 @@ function App() {
   }
 
   // ── Start recording ──────────────────────────────────────────
+  // ── Live monitor: mic → FX → speaker (no loop-back into recording) ─
+  function startMonitor(stream, fx) {
+    stopMonitor();
+    if (!fx || fx.preset === 'none') return; // no FX = no monitor needed
+    const ctx = getCtx();
+    const src = ctx.createMediaStreamSource(stream);
+    const fxChain = buildFxChain(ctx, fx);
+    const gain = ctx.createGain();
+    gain.gain.value = 0.85; // slightly under 1 to avoid feedback
+    fxChain.output.connect(gain);
+    gain.connect(ctx.destination);
+    src.connect(fxChain.input);
+    monitorNodeRef.current = src;
+    monitorGainRef.current = gain;
+  }
+
   function startActualRecording(trackId, stream, audioStartT) {
     const barsNow=barsRef.current, bpmNow=bpmRef.current;
     const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
@@ -613,6 +735,12 @@ function App() {
     // Overdub: play existing
     playAllImpl(recTracksRef.current, impTracksRef.current, true);
     scheduleBeatMetro(audioStartT, totalBeats);
+
+    // Start live FX monitor for recording track
+    const recTrack = recTracksRef.current.find(t => t.id === trackId);
+    if (recTrack && recTrack.fx && recTrack.fx.preset !== 'none') {
+      startMonitor(stream, recTrack.fx);
+    }
 
     chunksRef.current=[]; recTrackIdRef.current=trackId;
     const mr=new MediaRecorder(stream);
@@ -627,6 +755,7 @@ function App() {
   function finalizeRec(trackId, barsUsed) {
     clearTimeout(recTimerRef.current);
     beatMetroTimers.current.forEach(clearTimeout);
+    stopMonitor();
     stopAllPlayback();
     const mr=mrRef.current;
     if(!mr||mr.state==="inactive"){setRecTracks(prev=>prev.map(t=>t.id===trackId?{...t,recording:false}:t));return;}
@@ -722,6 +851,18 @@ function App() {
 
   // ── Mute / Solo / Delete ─────────────────────────────────────
   const mutRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,muted:!t.muted}:t));
+  const toggleSelfMonitor=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,selfMonitor:!t.selfMonitor}:t));
+  const toggleFxRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,fxOpen:!t.fxOpen}:t));
+  const changeFxRec=(id,fx)=>{
+    setRecTracks(p=>p.map(t=>t.id===id?{...t,fx}:t));
+    // If this track is currently recording, restart monitor with new FX
+    const track = recTracksRef.current.find(t=>t.id===id);
+    if (track && track.recording && micStream) {
+      startMonitor(micStream, fx);
+    }
+  };
+  const toggleFxImp=id=>setImpTracks(p=>p.map(t=>t.id===id?{...t,fxOpen:!t.fxOpen}:t));
+  const changeFxImp=(id,fx)=>setImpTracks(p=>p.map(t=>t.id===id?{...t,fx}:t));
   const solRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,soloed:!t.soloed}:t));
   const delRec=id=>setRecTracks(p=>p.filter(t=>t.id!==id));
   const mutImp=id=>setImpTracks(p=>p.map(t=>t.id===id?{...t,muted:!t.muted}:t));
@@ -747,6 +888,217 @@ function App() {
   }
   function stopPlayhead(){cancelAnimationFrame(playheadRaf.current);setPlayPos(null);}
 
+
+  // ════════════════════════════════════════════════════════
+  // FX ENGINE
+  // Each preset returns { inputNode, outputNode }
+  // src → inputNode → [fx chain] → outputNode → gain → dest
+  // wet param (0-1): mix between dry and processed
+  // ════════════════════════════════════════════════════════
+
+  // Create convolver impulse for reverb
+  function makeImpulse(ctx, duration, decay, reverse) {
+    const sr = ctx.sampleRate;
+    const len = sr * duration;
+    const buf = ctx.createBuffer(2, len, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const n = reverse ? len - i : i;
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - n / len, decay);
+      }
+    }
+    return buf;
+  }
+
+  function buildFxChain(ctx, fx) {
+    const { preset, wet } = fx;
+    if (preset === 'none') {
+      // Pass-through
+      const g = ctx.createGain(); g.gain.value = 1;
+      return { input: g, output: g };
+    }
+
+    const dryGain  = ctx.createGain();
+    const wetGain  = ctx.createGain();
+    const merger   = ctx.createGain();
+    dryGain.gain.value  = 1 - wet;
+    wetGain.gain.value  = wet;
+
+    let fxInput, fxOutput;
+
+    if (preset === 'reverb') {
+      const conv = ctx.createConvolver();
+      conv.buffer = makeImpulse(ctx, 2.5, 2, false);
+      fxInput = conv; fxOutput = conv;
+
+    } else if (preset === 'gateReverb') {
+      // Reverse impulse creates gate reverb effect
+      const conv = ctx.createConvolver();
+      conv.buffer = makeImpulse(ctx, 0.8, 0.5, true);
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -30; comp.ratio.value = 20;
+      comp.attack.value = 0.001; comp.release.value = 0.1;
+      conv.connect(comp);
+      fxInput = conv; fxOutput = comp;
+
+    } else if (preset === 'delay') {
+      const delay = ctx.createDelay(2.0);
+      delay.delayTime.value = 0.375; // 16th note at 120bpm
+      const fb = ctx.createGain(); fb.gain.value = 0.45;
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 4000;
+      delay.connect(lpf); lpf.connect(fb); fb.connect(delay);
+      fxInput = delay; fxOutput = delay;
+
+    } else if (preset === 'flanger') {
+      const delay = ctx.createDelay(0.02);
+      const lfo   = ctx.createOscillator();
+      const lfoG  = ctx.createGain();
+      lfo.frequency.value = 0.4; lfoG.gain.value = 0.003;
+      lfo.connect(lfoG); lfoG.connect(delay.delayTime);
+      lfo.start();
+      const fb = ctx.createGain(); fb.gain.value = 0.7;
+      delay.connect(fb); fb.connect(delay);
+      fxInput = delay; fxOutput = delay;
+
+    } else if (preset === 'chorus') {
+      const delay = ctx.createDelay(0.05);
+      delay.delayTime.value = 0.025;
+      const lfo  = ctx.createOscillator();
+      const lfoG = ctx.createGain();
+      lfo.frequency.value = 1.2; lfoG.gain.value = 0.008;
+      lfo.connect(lfoG); lfoG.connect(delay.delayTime);
+      lfo.start();
+      fxInput = delay; fxOutput = delay;
+
+    } else if (preset === 'distortion') {
+      const wave = ctx.createWaveShaper();
+      const k = 200;
+      const n = 256, curve = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = (i * 2) / n - 1;
+        curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x));
+      }
+      wave.curve = curve; wave.oversample = '4x';
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 3500;
+      wave.connect(lpf);
+      fxInput = wave; fxOutput = lpf;
+
+    } else if (preset === 'lofi') {
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 2200;
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass'; hpf.frequency.value = 300;
+      // Bit-crush via wave shaper
+      const crush = ctx.createWaveShaper();
+      const bits = 6, steps = Math.pow(2, bits);
+      const curve = new Float32Array(256);
+      for (let i = 0; i < 256; i++) {
+        const x = (i * 2) / 255 - 1;
+        curve[i] = Math.round(x * steps) / steps;
+      }
+      crush.curve = curve;
+      lpf.connect(hpf); hpf.connect(crush);
+      fxInput = lpf; fxOutput = crush;
+
+    } else if (preset === 'telephone') {
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass'; hpf.frequency.value = 700;
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 3000;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking'; peak.frequency.value = 1800;
+      peak.gain.value = 8; peak.Q.value = 1.5;
+      hpf.connect(lpf); lpf.connect(peak);
+      fxInput = hpf; fxOutput = peak;
+
+    } else if (preset === 'tape') {
+      // Tape voice: slight pitch wobble + warm saturation + flutter
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 6000;
+      const sat = ctx.createWaveShaper();
+      const curve = new Float32Array(256);
+      for (let i = 0; i < 256; i++) {
+        const x = (i * 2) / 255 - 1;
+        curve[i] = Math.tanh(x * 2) * 0.8;
+      }
+      sat.curve = curve;
+      // Flutter LFO on gain
+      const flutter = ctx.createOscillator();
+      const flutterG = ctx.createGain();
+      flutter.frequency.value = 4.5; flutterG.gain.value = 0.04;
+      flutter.connect(flutterG);
+      const modGain = ctx.createGain(); modGain.gain.value = 1;
+      flutterG.connect(modGain.gain);
+      flutter.start();
+      lpf.connect(sat); sat.connect(modGain);
+      fxInput = lpf; fxOutput = modGain;
+
+    } else if (preset === 'robot') {
+      // Robot: ring modulation + heavy distortion
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 80; osc.type = 'sawtooth';
+      const ringGain = ctx.createGain(); ringGain.gain.value = 0;
+      osc.connect(ringGain.gain);
+      osc.start();
+      const distort = ctx.createWaveShaper();
+      const curve = new Float32Array(256);
+      for (let i = 0; i < 256; i++) {
+        const x = (i * 2) / 255 - 1;
+        curve[i] = Math.sign(x) * (1 - Math.exp(-Math.abs(x) * 5));
+      }
+      distort.curve = curve;
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 2000;
+      ringGain.connect(distort); distort.connect(lpf);
+      fxInput = ringGain; fxOutput = lpf;
+
+    } else if (preset === 'helium') {
+      // Helium: pitch shift up via rapid delay modulation
+      const delay = ctx.createDelay(0.1);
+      delay.delayTime.value = 0.01;
+      const lfo = ctx.createOscillator();
+      const lfoG = ctx.createGain();
+      lfo.frequency.value = 8; lfoG.gain.value = 0.006;
+      lfo.connect(lfoG); lfoG.connect(delay.delayTime);
+      lfo.start();
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass'; hpf.frequency.value = 200;
+      delay.connect(hpf);
+      fxInput = delay; fxOutput = hpf;
+
+    } else if (preset === 'deep') {
+      // Deep voice: emphasize lows, attenuate highs, add sub resonance
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = 'lowpass'; lpf.frequency.value = 800;
+      const sub = ctx.createBiquadFilter();
+      sub.type = 'peaking'; sub.frequency.value = 120;
+      sub.gain.value = 12; sub.Q.value = 2;
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass'; hpf.frequency.value = 60;
+      lpf.connect(sub); sub.connect(hpf);
+      fxInput = lpf; fxOutput = hpf;
+
+    } else {
+      const g = ctx.createGain(); g.gain.value = 1;
+      return { input: g, output: g };
+    }
+
+    // Wire dry/wet
+    dryGain.connect(merger);
+    fxInput.connect(wetGain);  // Note: input feeds both dry and fx
+    // Actually we need the SOURCE to split to dry and fx:
+    // We handle this by returning a splitter node as 'input'
+    const splitter = ctx.createGain(); splitter.gain.value = 1;
+    splitter.connect(dryGain);
+    splitter.connect(fxInput);
+    wetGain.connect(merger);
+
+    return { input: splitter, output: merger };
+  }
+
   async function playAllImpl(rTracks, iTracks, overdub=false, loop=false) {
     stopAllPlayback();
     const ctx=getCtx();
@@ -757,6 +1109,9 @@ function App() {
     // Rec tracks: concat all blocks
     for (const track of rTracks) {
       if (!track.blocks.length) continue;
+      // During overdub: skip self-monitor=false tracks that are currently recording
+      const isCurrentlyRecording = track.id === recTrackIdRef.current;
+      if (overdub && isCurrentlyRecording && !track.selfMonitor) continue;
       const audible=overdub?true:(hasSolo?track.soloed:!track.muted);
       // Concat blocks into one buffer
       const bufs=track.blocks.map(b=>b.audioBuffer).filter(Boolean);
@@ -766,7 +1121,9 @@ function App() {
       if(!buf) continue;
       if(buf.duration>maxDur) maxDur=buf.duration;
       const gain=ctx.createGain(); gain.gain.value=audible?1:0; gain.connect(ctx.destination);
-      const src=ctx.createBufferSource(); src.buffer=buf; src.loop=loop; src.connect(gain); src.start(startAt);
+      const fx = buildFxChain(ctx, track.fx || {preset:'none',wet:0.5});
+      fx.output.connect(gain);
+      const src=ctx.createBufferSource(); src.buffer=buf; src.loop=loop; src.connect(fx.input); src.start(startAt);
       nodes.push(src);
     }
     // Import tracks
@@ -775,7 +1132,9 @@ function App() {
       const audible=overdub?true:(hasSolo?track.soloed:!track.muted);
       if(track.audioBuffer.duration>maxDur) maxDur=track.audioBuffer.duration;
       const gain=ctx.createGain(); gain.gain.value=audible?1:0; gain.connect(ctx.destination);
-      const src=ctx.createBufferSource(); src.buffer=track.audioBuffer; src.loop=loop; src.connect(gain); src.start(startAt);
+      const fx = buildFxChain(ctx, track.fx || {preset:'none',wet:0.5});
+      fx.output.connect(gain);
+      const src=ctx.createBufferSource(); src.buffer=track.audioBuffer; src.loop=loop; src.connect(fx.input); src.start(startAt);
       nodes.push(src);
     }
 
@@ -787,9 +1146,21 @@ function App() {
     }
   }
 
+  function stopMonitor() {
+    if (monitorNodeRef.current) {
+      try { monitorNodeRef.current.disconnect(); } catch {}
+      monitorNodeRef.current = null;
+    }
+    if (monitorGainRef.current) {
+      try { monitorGainRef.current.disconnect(); } catch {}
+      monitorGainRef.current = null;
+    }
+  }
+
   function stopAllPlayback(){
     playbackNodesRef.current.forEach(s=>{try{s.stop();}catch{}});
     playbackNodesRef.current=[];setIsPlaying(false);setIsLooping(false);stopPlayhead();
+    stopMonitor();
   }
 
   function handlePlayAll(){if(isPlaying||isLooping){stopAllPlayback();return;}playAllImpl(recTracks,impTracks,false,false);}
@@ -871,6 +1242,9 @@ function App() {
                 onRecord={()=>handleRecord(track.id)} onStop={()=>handleStop(track.id)}
                 onMute={()=>mutRec(track.id)} onSolo={()=>solRec(track.id)} onDelete={()=>delRec(track.id)}
                 onDeleteBlock={(bid)=>handleDeleteBlock(track.id,bid)}
+                onToggleSelfMonitor={()=>toggleSelfMonitor(track.id)}
+                onToggleFx={()=>toggleFxRec(track.id)}
+                onChangeFx={fx=>changeFxRec(track.id,fx)}
                 micStream={micStream} playTimeSec={playPos}/>
             </div>
           ))}
@@ -889,6 +1263,8 @@ function App() {
             onFileLoad={f=>handleFileLoad(track.id,f)}
             onMute={()=>mutImp(track.id)} onSolo={()=>solImp(track.id)}
             onDelete={()=>delImp(track.id)} onClear={()=>clrImp(track.id)}
+            onToggleFx={()=>toggleFxImp(track.id)}
+            onChangeFx={fx=>changeFxImp(track.id,fx)}
             playTimeSec={playPos}/>
         ))}
         {impTracks.length<MAX_IMP_TRACKS&&(
