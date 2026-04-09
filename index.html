@@ -256,10 +256,10 @@ function TransportBar({bpm,onBpm,bars,onBars,disabled,onTap,tapActive,onPreview,
 // ─── Timeline ruler ────────────────────────────────────────────
 function TimelineRuler({totalBars, cellW}) {
   return (
-    <div style={{display:"flex",height:18,borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0,
-      marginLeft:110, /* offset for track label */}}>
+    <div style={{display:"flex",height:18,borderBottom:"1px solid rgba(255,255,255,0.06)",
+      width:totalBars*cellW, flexShrink:0}}>
       {Array.from({length:totalBars}).map((_,i)=>(
-        <div key={i} style={{minWidth:cellW,borderLeft:"1px solid rgba(255,255,255,0.08)",
+        <div key={i} style={{width:cellW,flexShrink:0,borderLeft:i===0?"none":"1px solid rgba(255,255,255,0.08)",
           display:"flex",alignItems:"center",paddingLeft:4,fontSize:9,color:"#334155",fontFamily:"monospace"}}>
           {i+1}
         </div>
@@ -281,9 +281,10 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
   // playPos is global 0-1
 
   return (
-    <div style={{display:"flex",alignItems:"stretch",marginBottom:6,opacity:track.muted&&!track.soloed?0.38:1}}>
+    <div style={{display:"flex",alignItems:"stretch",marginBottom:6,opacity:track.muted&&!track.soloed?0.38:1,overflowX:"auto"}}>
       {/* Label panel */}
-      <div style={{width:110,flexShrink:0,background:isRec?"rgba(239,68,68,0.08)":"rgba(255,255,255,0.025)",
+      <div style={{width:110,flexShrink:0,position:"sticky",left:0,zIndex:2,
+        background:isRec?"rgba(20,8,8,0.95)":"rgba(9,12,22,0.95)",
         border:isRec?"1px solid rgba(239,68,68,0.4)":"1px solid rgba(255,255,255,0.06)",
         borderRight:"none",borderRadius:"10px 0 0 10px",padding:"6px 8px",
         display:"flex",flexDirection:"column",gap:4}}>
@@ -310,12 +311,12 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
         </div>
       </div>
 
-      {/* Timeline area */}
-      <div style={{flex:1,position:"relative",background:"rgba(0,0,0,0.25)",
+      {/* Timeline area — fixed px width so absolute coords match grid */}
+      <div style={{width:totalBars*cellW,flexShrink:0,position:"relative",background:"rgba(0,0,0,0.25)",
         border:"1px solid rgba(255,255,255,0.06)",borderRadius:"0 10px 10px 0",
         overflow:"hidden",minHeight:72}}>
         {/* Grid lines */}
-        <div style={{position:"absolute",inset:0,display:"flex",pointerEvents:"none"}}>
+        <div style={{position:"absolute",inset:0,display:"flex",pointerEvents:"none",width:totalBars*cellW}}>
           {Array.from({length:totalBars}).map((_,i)=>(
             <div key={i} style={{minWidth:cellW,borderLeft:i===0?"none":"1px solid rgba(255,255,255,0.04)",height:"100%"}}/>
           ))}
@@ -856,7 +857,7 @@ function App() {
           <div style={{width:110,flexShrink:0,fontSize:9,color:"#334155",fontFamily:"monospace",letterSpacing:"0.1em",paddingLeft:4,display:"flex",alignItems:"center"}}>
             🎤 録音トラック
           </div>
-          <div style={{flex:1,overflowX:"auto"}}>
+          <div style={{overflowX:"hidden",width:0,flex:1}}>
             <TimelineRuler totalBars={totalBars} cellW={cellW}/>
           </div>
         </div>
