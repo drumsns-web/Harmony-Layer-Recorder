@@ -214,15 +214,33 @@ function Chip({label, active, onClick, disabled, color}) {
   );
 }
 
-function TransportBar({bpm,onBpm,bars,onBars,disabled}) {
+function TransportBar({bpm,onBpm,bars,onBars,disabled,onTap,tapActive,onPreview,previewing}) {
   return (
-    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",
       background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",
       borderRadius:12,padding:"8px 14px",marginBottom:14,width:"100%",maxWidth:760}}>
       <span style={{fontSize:10,color:"#475569",letterSpacing:"0.1em"}}>BPM</span>
       <input type="range" min={40} max={200} step={1} value={bpm} onChange={e=>onBpm(Number(e.target.value))} disabled={disabled} style={{width:90}}/>
       <span style={{fontFamily:"'Space Mono',monospace",fontSize:13,fontWeight:700,color:GOLD,minWidth:28}}>{bpm}</span>
       {[80,100,120,140].map(v=><Chip key={v} label={v} active={bpm===v} onClick={()=>onBpm(v)} disabled={disabled}/>)}
+      {/* TAP button */}
+      <button onClick={onTap} disabled={disabled}
+        style={{background:tapActive?"rgba(200,169,110,0.22)":"rgba(255,255,255,0.05)",
+          border:tapActive?"1px solid rgba(200,169,110,0.5)":"1px solid rgba(255,255,255,0.1)",
+          borderRadius:7,color:tapActive?GOLD:"#4a6080",fontSize:10,padding:"4px 10px",
+          cursor:disabled?"not-allowed":"pointer",fontFamily:"monospace",fontWeight:700,
+          opacity:disabled?0.38:1,transition:"all 0.1s",letterSpacing:"0.06em"}}>
+        TAP
+      </button>
+      {/* Preview metronome button */}
+      <button onClick={onPreview} disabled={disabled}
+        style={{background:previewing?"rgba(74,222,128,0.15)":"rgba(255,255,255,0.05)",
+          border:previewing?"1px solid rgba(74,222,128,0.4)":"1px solid rgba(255,255,255,0.1)",
+          borderRadius:7,color:previewing?"#4ade80":"#4a6080",fontSize:10,padding:"4px 10px",
+          cursor:disabled?"not-allowed":"pointer",fontFamily:"monospace",fontWeight:700,
+          opacity:disabled?0.38:1,transition:"all 0.1s",letterSpacing:"0.06em"}}>
+        {previewing?"■ STOP":"▶ CLICK"}
+      </button>
       <div style={{width:1,height:18,background:"rgba(255,255,255,0.08)",margin:"0 2px"}}/>
       <span style={{fontSize:10,color:"#475569",letterSpacing:"0.1em"}}>BARS</span>
       {BAR_OPTIONS.map(b=><Chip key={b} label={b} active={bars===b} onClick={()=>onBars(b)} disabled={disabled} color={bars===b?GOLD_LT:null}/>)}
@@ -302,7 +320,10 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
         {/* Blocks */}
         {track.blocks.map(block=>{
           const left = (block.startBar-1) * cellW;
-          const width = block.bars * cellW;
+          // Use actual audio duration for accurate width
+          const barDurSec = (60 / bpm) * BEATS_PER_BAR;
+          const actualBars = block.audioBuffer ? block.audioBuffer.duration / barDurSec : block.bars;
+          const width = actualBars * cellW;
           return (
             <div key={block.id} style={{position:"absolute",top:4,left,width,height:"calc(100% - 8px)",
               background:"rgba(200,169,110,0.15)",border:"1px solid rgba(200,169,110,0.35)",
@@ -485,6 +506,12 @@ function App() {
   const [beatOn, setBeatOn] = useState(false);
   const [beatsDone, setBeatsDone] = useState(0);
   const [playPos, setPlayPos] = useState(null); // 0-1
+  const [tapTimes, setTapTimes] = useState([]);
+  const [tapActive, setTapActive] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const previewIntervalRef = useRef(null);
+  const previewBeatRef = useRef(0);
+  const tapActiveTimerRef = useRef(null);
 
   const audioCtxRef = useRef(null);
   const mrRef = useRef(null);
@@ -615,8 +642,58 @@ function App() {
     mr.stop();
   }
 
+  // ── Tap Tempo ──────────────────────────────────────────────
+  function handleTap() {
+    const now = performance.now();
+    setTapTimes(prev => {
+      const recent = [...prev, now].filter(t => now - t < 3000);
+      if (recent.length >= 2) {
+        let total = 0;
+        for (let i = 1; i < recent.length; i++) total += recent[i] - recent[i-1];
+        const avgMs = total / (recent.length - 1);
+        const newBpm = Math.round(60000 / avgMs);
+        if (newBpm >= 40 && newBpm <= 200) setBpm(newBpm);
+      }
+      setTapActive(true);
+      clearTimeout(tapActiveTimerRef.current);
+      tapActiveTimerRef.current = setTimeout(() => setTapActive(false), 280);
+      return recent;
+    });
+  }
+
+  // ── Preview metronome ───────────────────────────────────────
+  // Uses recursive setTimeout so BPM changes take effect immediately
+  function handlePreview() {
+    if (previewing) {
+      clearTimeout(previewIntervalRef.current);
+      setPreviewing(false);
+      setBeat(0); setBeatOn(false);
+      return;
+    }
+    const ctx = getCtx();
+    setPreviewing(true);
+    let beatCount = 0;
+    const tick = () => {
+      const b = (beatCount % BEATS_PER_BAR) + 1;
+      playClick(ctx, b === 1, ctx.currentTime);
+      setBeat(b); setBeatOn(true);
+      beatCount++;
+      const bpmNow = bpmRef.current;
+      const beatMs = 60000 / bpmNow;
+      const flashMs = Math.min(beatMs * 0.35, 145);
+      setTimeout(() => setBeatOn(false), flashMs);
+      previewIntervalRef.current = setTimeout(tick, beatMs);
+    };
+    tick();
+  }
+
   async function handleRecord(trackId) {
     const stream=await getMic(); if(!stream) return;
+    // Stop preview metronome if running
+    if (previewing) {
+      clearTimeout(previewIntervalRef.current);
+      setPreviewing(false);
+    }
     setCountingIn(true);setBeatsDone(0);
     scheduleCountIn((audioStartT)=>startActualRecording(trackId,stream,audioStartT));
   }
@@ -710,7 +787,9 @@ function App() {
 
   function handlePlayAll(){if(isPlaying||isLooping){stopAllPlayback();return;}playAllImpl(recTracks,impTracks,false,false);}
   function handleLoopAll(){if(isLooping||isPlaying){stopAllPlayback();return;}playAllImpl(recTracks,impTracks,false,true);setIsLooping(true);}
-  function handleStopAll(){if(countingIn){countInTimers.current.forEach(clearTimeout);setCountingIn(false);setBeat(0);setBeatOn(false);return;}stopAllPlayback();const rec=recTracks.find(t=>t.recording);if(rec)handleStop(rec.id);}
+  function handleStopAll(){
+    if(previewing){clearTimeout(previewIntervalRef.current);setPreviewing(false);setBeat(0);setBeatOn(false);}
+    if(countingIn){countInTimers.current.forEach(clearTimeout);setCountingIn(false);setBeat(0);setBeatOn(false);return;}stopAllPlayback();const rec=recTracks.find(t=>t.recording);if(rec)handleStop(rec.id);}
 
   const hasAny=[...recTracks.filter(t=>t.blocks.length>0),...impTracks.filter(t=>t.audioBuffer)].length>0;
   const totalBeatsDuringRec=bars*BEATS_PER_BAR;
@@ -748,7 +827,7 @@ function App() {
         </div>
       )}
 
-      <TransportBar bpm={bpm} onBpm={setBpm} bars={bars} onBars={setBars} disabled={anyActive}/>
+      <TransportBar bpm={bpm} onBpm={setBpm} bars={bars} onBars={setBars} disabled={anyActive} onTap={handleTap} tapActive={tapActive} onPreview={handlePreview} previewing={previewing}/>
       <BeatDisplay beat={beat} beatOn={beatOn} countingIn={countingIn} isRecording={isRecording}
         bpm={bpm} barCount={bars} beatsDone={beatsDone} totalBeats={totalBeatsDuringRec}/>
 
