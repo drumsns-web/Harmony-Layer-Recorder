@@ -595,8 +595,8 @@ function WavePanel({recTracks,impTracks,playPos,isLooping,maxDur}){
 }
 
 function AddBtn({onClick,label}){
-  return(<button onClick={onClick} style={{width:'100%',background:'rgba(255,255,255,0.018)',
-    border:'1px dashed rgba(255,255,255,0.07)',borderRadius:10,padding:'8px',color:'#1f2937',
+  return(<button onClick={onClick} style={{width:'100%',background:'rgba(255,255,255,0.04)',
+    border:'1px dashed rgba(200,169,110,0.3)',borderRadius:10,padding:'8px',color:'#94a3b8',
     fontSize:10,fontFamily:'monospace',letterSpacing:'0.1em',cursor:'pointer',transition:'all 0.16s',marginBottom:6}}
     onMouseEnter={e=>e.currentTarget.style.borderColor='rgba(200,169,110,0.28)'}
     onMouseLeave={e=>e.currentTarget.style.borderColor='rgba(255,255,255,0.07)'}>{label}</button>);
@@ -779,6 +779,8 @@ function App(){
   function startActualRecording(trackId,stream,audioStartT){
     const barsNow=barsRef.current, bpmNow=bpmRef.current;
     const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
+    // Set recTrackIdRef BEFORE playAllImpl so overdub skip works correctly
+    recTrackIdRef.current=trackId;
     playAllImpl(recTracksRef.current,impTracksRef.current,true);
     scheduleBeatMetro(audioStartT,barsNow*BEATS_PER_BAR);
 
@@ -786,7 +788,7 @@ function App(){
     const recTrack=recTracksRef.current.find(t=>t.id===trackId);
     if(recTrack?.fx?.preset!=='none') startMonitor(stream,recTrack.fx);
 
-    chunksRef.current=[]; recTrackIdRef.current=trackId;
+    chunksRef.current=[];
     const mr=new MediaRecorder(stream); mrRef.current=mr;
     mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
     mr.start(100);
