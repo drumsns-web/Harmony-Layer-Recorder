@@ -88,9 +88,13 @@ function MiniWave({ audioBuffer, color }) {
 }
 
 // ─── Full waveform canvas with live playhead ───────────────────
-function WaveCanvas({ audioBuffer, playPos, color, height=52, label }) {
+function WaveCanvas({ audioBuffer, playTimeSec, color, height=52, label }) {
   const ref = useRef(null);
   const last = useRef(-1);
+  // Convert elapsed seconds to 0-1 fraction of this buffer's duration
+  const playPos = (playTimeSec !== null && audioBuffer)
+    ? Math.min(1, Math.max(0, (playTimeSec % audioBuffer.duration) / audioBuffer.duration))
+    : null;
   useEffect(() => {
     if (!ref.current||!audioBuffer) return;
     ref.current.width = ref.current.offsetWidth||700;
@@ -266,7 +270,7 @@ function TimelineRuler({totalBars, cellW}) {
 
 // ─── Recording Track Row with timeline ────────────────────────
 function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, countingIn, onRecord, onStop,
-  onMute, onSolo, onDelete, onDeleteBlock, micStream, playPos}) {
+  onMute, onSolo, onDelete, onDeleteBlock, micStream, playTimeSec}) {
   const level = useLevelMeter(track.recording ? micStream : null);
   const isRec = track.recording;
 
@@ -353,10 +357,10 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
           );
         })()}
 
-        {/* Playhead */}
-        {playPos!==null && (
+        {/* Playhead: convert elapsed seconds → pixel position */}
+        {playTimeSec!==null && (
           <div style={{position:"absolute",top:0,bottom:0,width:1.5,background:"#f87171",opacity:0.8,
-            left: playPos * totalBars * cellW, pointerEvents:"none"}}/>
+            left: (playTimeSec / ((60/bpm)*BEATS_PER_BAR)) * cellW, pointerEvents:"none"}}/>
         )}
       </div>
     </div>
@@ -364,7 +368,7 @@ function RecTrackRow({track, totalBars, cellW, bpm, bars, anyRecording, counting
 }
 
 // ─── Import Track Row ─────────────────────────────────────────
-function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDelete, onClear, playPos}) {
+function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDelete, onClear, playTimeSec}) {
   const fileRef = useRef();
   const hasAudio = !!track.audioBuffer;
 
@@ -395,10 +399,10 @@ function ImpTrackRow({track, totalBars, cellW, onFileLoad, onMute, onSolo, onDel
         border:"1px solid rgba(99,102,241,0.1)",borderRadius:"0 10px 10px 0",overflow:"hidden",minHeight:72}}>
         {hasAudio ? (
           <>
-            <WaveCanvas audioBuffer={track.audioBuffer} playPos={playPos} color={PURPLE} height={72} label={track.filename}/>
+            <WaveCanvas audioBuffer={track.audioBuffer} playTimeSec={playPos} color={PURPLE} height={72} label={track.filename}/>
             {playPos!==null && (
               <div style={{position:"absolute",top:0,bottom:0,width:1.5,background:"#f87171",opacity:0.8,
-                left:`${playPos*100}%`,pointerEvents:"none"}}/>
+                left: track.audioBuffer ? `${Math.min(100,Math.max(0,(playTimeSec%(track.audioBuffer.duration||1))/(track.audioBuffer.duration||1)*100))}%` : 0, pointerEvents:"none"}}/>
             )}
           </>
         ) : (
@@ -468,11 +472,11 @@ function WavePanel({recTracks, impTracks, playPos, isLooping, totalBars, maxDur}
         if(!bufs.length) return null;
         const buf=bufs[0]; // simplified: show first block waveform
         const color=track.muted?"#2d3748":isLooping?GOLD_LT:GOLD;
-        const rel=playPos!==null?playPos:null;
+        const rel=playPos; // already in seconds
         return (
           <div key={track.id} style={{background:"rgba(0,0,0,0.18)",borderRadius:7,overflow:"hidden",
             border:"1px solid rgba(255,255,255,0.05)",opacity:track.muted&&!track.soloed?0.28:1}}>
-            <WaveCanvas audioBuffer={buf} playPos={rel} color={color} height={44}
+            <WaveCanvas audioBuffer={buf} playTimeSec={rel} color={color} height={44}
               label={`${track.name}${track.muted?" [muted]":track.soloed?" [solo]":""}`}/>
           </div>
         );
@@ -482,7 +486,7 @@ function WavePanel({recTracks, impTracks, playPos, isLooping, totalBars, maxDur}
         return (
           <div key={track.id} style={{background:"rgba(0,0,0,0.18)",borderRadius:7,overflow:"hidden",
             border:"1px solid rgba(99,102,241,0.1)",opacity:track.muted&&!track.soloed?0.28:1}}>
-            <WaveCanvas audioBuffer={track.audioBuffer} playPos={playPos} color={color} height={44}
+            <WaveCanvas audioBuffer={track.audioBuffer} playTimeSec={playPos} color={color} height={44}
               label={`${track.name}${track.muted?" [muted]":track.soloed?" [solo]":""}`}/>
           </div>
         );
@@ -733,7 +737,9 @@ function App() {
     const tick=()=>{
       const ctx=audioCtxRef.current; if(!ctx) return;
       const el=ctx.currentTime-startT;
-      setPlayPos(Math.min(1,Math.max(0,dur>0?(el%dur)/dur:0)));
+      // Emit elapsed seconds (looping wraps at dur)
+      const sec = dur>0 ? el%dur : el;
+      setPlayPos(Math.max(0, sec));
       playheadRaf.current=requestAnimationFrame(tick);
     };
     playheadRaf.current=requestAnimationFrame(tick);
@@ -864,7 +870,7 @@ function App() {
                 onRecord={()=>handleRecord(track.id)} onStop={()=>handleStop(track.id)}
                 onMute={()=>mutRec(track.id)} onSolo={()=>solRec(track.id)} onDelete={()=>delRec(track.id)}
                 onDeleteBlock={(bid)=>handleDeleteBlock(track.id,bid)}
-                micStream={micStream} playPos={playPos}/>
+                micStream={micStream} playTimeSec={playPos}/>
             </div>
           ))}
         </div>
@@ -882,7 +888,7 @@ function App() {
             onFileLoad={f=>handleFileLoad(track.id,f)}
             onMute={()=>mutImp(track.id)} onSolo={()=>solImp(track.id)}
             onDelete={()=>delImp(track.id)} onClear={()=>clrImp(track.id)}
-            playPos={playPos}/>
+            playTimeSec={playPos}/>
         ))}
         {impTracks.length<MAX_IMP_TRACKS&&(
           <AddBtn onClick={addImpTrack} label="＋ インポートトラックを追加"/>
