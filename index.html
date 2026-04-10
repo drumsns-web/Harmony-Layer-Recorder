@@ -886,7 +886,16 @@ function TimelineRuler({totalBars,cellW}){
 function TrimHandle({side, onDrag}) {
   const dragging = useRef(false);
   const startX   = useRef(0);
-  const [active, setActive] = useState(false);
+  const handleRef = useRef(null);
+
+  function setActive(on) {
+    if (!handleRef.current) return;
+    handleRef.current.style.width    = on ? '6px' : '4px';
+    handleRef.current.style.background = on ? '#facc15' : 'rgba(200,169,110,0.95)';
+    handleRef.current.style.boxShadow  = on
+      ? '0 0 0 2px rgba(250,204,21,0.5), 0 0 10px rgba(250,204,21,0.8)'
+      : '0 0 0 1px rgba(200,169,110,0.5), 0 2px 6px rgba(0,0,0,0.5)';
+  }
 
   function start(clientX) {
     dragging.current = true;
@@ -898,14 +907,14 @@ function TrimHandle({side, onDrag}) {
     window.addEventListener('touchend',    onUp);
   }
   function onMove(e) {
-    if(!dragging.current) return;
+    if (!dragging.current) return;
     e.preventDefault();
     const dx = e.clientX - startX.current;
     startX.current = e.clientX;
     onDrag(dx);
   }
   function onMoveT(e) {
-    if(!dragging.current) return;
+    if (!dragging.current) return;
     e.preventDefault();
     const dx = e.touches[0].clientX - startX.current;
     startX.current = e.touches[0].clientX;
@@ -933,17 +942,10 @@ function TrimHandle({side, onDrag}) {
         display:'flex', alignItems:'center', justifyContent:'center',
         touchAction:'none',
       }}>
-      {/* ハンドル本体 - 目立つデザイン */}
-      <div style={{
-        width: active?6:4,
-        height: 32,
-        borderRadius: 3,
-        background: active
-          ? '#facc15'
-          : 'rgba(200,169,110,0.95)',
-        boxShadow: active
-          ? '0 0 0 2px rgba(250,204,21,0.5), 0 0 10px rgba(250,204,21,0.8)'
-          : '0 0 0 1px rgba(200,169,110,0.5), 0 2px 6px rgba(0,0,0,0.5)',
+      <div ref={handleRef} style={{
+        width: 4, height: 32, borderRadius: 3,
+        background: 'rgba(200,169,110,0.95)',
+        boxShadow: '0 0 0 1px rgba(200,169,110,0.5), 0 2px 6px rgba(0,0,0,0.5)',
         transition: 'all 0.1s',
       }}/>
     </div>
