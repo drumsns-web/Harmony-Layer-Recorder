@@ -221,11 +221,22 @@ function drawWave(audioBuffer, canvas, color, playPos){
   const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height;
   ctx.clearRect(0,0,W,H);
   const data=audioBuffer.getChannelData(0), step=Math.max(1,Math.floor(data.length/W)), mid=H/2;
-  ctx.fillStyle=color+'77';
+
+  // Find true peak amplitude of entire buffer for scaling
+  let peak=0;
+  for(let i=0;i<data.length;i++){const a=Math.abs(data[i]);if(a>peak)peak=a;}
+  // Minimum scale: if nearly silent, cap at 0.02 so it's still recognizable but tiny
+  const scale=peak<0.001?0:Math.min(1,peak)*0.95;
+
+  ctx.fillStyle=color+'88';
   for(let x=0;x<W;x++){
-    let mn=1,mx=-1;
+    let mn=0,mx=0;
     for(let j=0;j<step;j++){const v=data[x*step+j]||0;if(v<mn)mn=v;if(v>mx)mx=v;}
-    ctx.fillRect(x,mid+mx*mid*0.9,1,Math.max(1,(mid+mn*mid*0.9)-(mid+mx*mid*0.9)));
+    // Scale each bar by the buffer's true peak — loud=tall, quiet=short
+    const yTop=mid + mx*mid*scale;
+    const yBot=mid + mn*mid*scale;
+    const barH=Math.max(0, yBot-yTop); // 0px if truly silent
+    if(barH>0) ctx.fillRect(x, yTop, 1, barH);
   }
   if(playPos!=null){
     const px=Math.floor(playPos*W);
@@ -499,7 +510,18 @@ function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onR
               borderRadius:6,overflow:'hidden'}}>
               <MiniWave audioBuffer={block.audioBuffer} color={GOLD}/>
               <div style={{position:'absolute',bottom:2,left:4,right:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.8}}>{block.bars}小節</span>
+                <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.8}}>
+                  {block.bars}小節
+                  {block.audioBuffer&&(()=>{
+                    // Compute peak dBFS for display
+                    const d=block.audioBuffer.getChannelData(0);
+                    let pk=0; for(let i=0;i<d.length;i++){const a=Math.abs(d[i]);if(a>pk)pk=a;}
+                    const db=pk<0.00001?-Infinity:Math.max(-60,20*Math.log10(pk));
+                    const dbStr=db<=-60?'-∞':db.toFixed(1);
+                    const dbColor=db>-6?'#f87171':db>-18?'#facc15':'#4ade80';
+                    return <span style={{marginLeft:4,color:dbColor,fontSize:8}}>{dbStr}dB</span>;
+                  })()}
+                </span>
                 <button onClick={()=>onDeleteBlock(block.id)} style={{background:'rgba(239,68,68,0.2)',
                   border:'1px solid rgba(239,68,68,0.3)',borderRadius:3,color:'#f87171',fontSize:9,padding:'0 4px',cursor:'pointer',lineHeight:'14px'}}>✕</button>
               </div>
