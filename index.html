@@ -883,69 +883,72 @@ function TimelineRuler({totalBars,cellW}){
 
 // ── Trim Handle ─────────────────────────────────────────────
 // Draggable edge on block — left or right
-function TrimHandle({side, onDrag, onDragEnd}) {
+function TrimHandle({side, onDrag}) {
   const dragging = useRef(false);
   const startX   = useRef(0);
+  const [active, setActive] = useState(false);
 
-  function onPointerDown(e) {
-    e.stopPropagation(); e.preventDefault();
+  function start(clientX) {
     dragging.current = true;
-    startX.current = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    startX.current = clientX;
+    setActive(true);
     window.addEventListener('pointermove', onMove, {passive:false});
     window.addEventListener('pointerup',   onUp);
-    window.addEventListener('touchmove',   onMoveTouch, {passive:false});
+    window.addEventListener('touchmove',   onMoveT, {passive:false});
     window.addEventListener('touchend',    onUp);
   }
   function onMove(e) {
-    if(!dragging.current)return;
+    if(!dragging.current) return;
     e.preventDefault();
-    const cx = e.clientX || 0;
-    const dx = cx - startX.current;
-    startX.current = cx;
+    const dx = e.clientX - startX.current;
+    startX.current = e.clientX;
     onDrag(dx);
   }
-  function onMoveTouch(e) {
-    if(!dragging.current)return;
+  function onMoveT(e) {
+    if(!dragging.current) return;
     e.preventDefault();
-    const cx = e.touches[0].clientX;
-    const dx = cx - startX.current;
-    startX.current = cx;
+    const dx = e.touches[0].clientX - startX.current;
+    startX.current = e.touches[0].clientX;
     onDrag(dx);
   }
   function onUp() {
     dragging.current = false;
+    setActive(false);
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup',   onUp);
-    window.removeEventListener('touchmove',   onMoveTouch);
+    window.removeEventListener('touchmove',   onMoveT);
     window.removeEventListener('touchend',    onUp);
-    if(onDragEnd) onDragEnd();
   }
 
   return (
     <div
-      onPointerDown={onPointerDown}
-      onTouchStart={e=>{e.stopPropagation();onPointerDown(e.touches[0]?{...e,clientX:e.touches[0].clientX,preventDefault:()=>e.preventDefault(),stopPropagation:()=>e.stopPropagation()}:e);}}
+      onPointerDown={e=>{e.stopPropagation();e.preventDefault();start(e.clientX);}}
+      onTouchStart={e=>{e.stopPropagation();e.preventDefault();start(e.touches[0].clientX);}}
       style={{
         position:'absolute', top:0, bottom:0,
-        [side]: 0,
-        width: 14,
-        cursor: side==='left' ? 'w-resize' : 'e-resize',
-        zIndex: 10,
+        [side]: -6,
+        width: 20,
+        cursor: side==='left'?'w-resize':'e-resize',
+        zIndex: 20,
         display:'flex', alignItems:'center', justifyContent:'center',
-        background: side==='left'
-          ? 'linear-gradient(to right, rgba(200,169,110,0.5), transparent)'
-          : 'linear-gradient(to left, rgba(200,169,110,0.5), transparent)',
-        touchAction: 'none',
+        touchAction:'none',
       }}>
+      {/* ハンドル本体 - 目立つデザイン */}
       <div style={{
-        width:3, height:24, borderRadius:2,
-        background:'rgba(200,169,110,0.9)',
-        boxShadow:'0 0 4px rgba(200,169,110,0.8)',
+        width: active?6:4,
+        height: 32,
+        borderRadius: 3,
+        background: active
+          ? '#facc15'
+          : 'rgba(200,169,110,0.95)',
+        boxShadow: active
+          ? '0 0 0 2px rgba(250,204,21,0.5), 0 0 10px rgba(250,204,21,0.8)'
+          : '0 0 0 1px rgba(200,169,110,0.5), 0 2px 6px rgba(0,0,0,0.5)',
+        transition: 'all 0.1s',
       }}/>
     </div>
   );
 }
-
 
 // ── Rec Track Row ───────────────────────────────────────────────
 function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onRecord,onStop,
@@ -1014,23 +1017,88 @@ function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onR
           const actualBars=block.audioBuffer?block.audioBuffer.duration/barDurSec:block.bars;
           const width=actualBars*cellW;
           return(
-            <div key={block.id} style={{position:'absolute',top:4,left,width,height:'calc(100% - 8px)',
-              background:splitMode&&splitMode.blockId===block.id?'rgba(250,204,21,0.08)':'rgba(200,169,110,0.15)',
-              border:splitMode&&splitMode.blockId===block.id?'1px solid rgba(250,204,21,0.5)':'1px solid rgba(200,169,110,0.35)',
-              borderRadius:6,overflow:'hidden',cursor:splitMode&&splitMode.blockId===block.id?'crosshair':'default'}}
-              onClick={splitMode&&splitMode.blockId===block.id?e=>{
-                const rect=e.currentTarget.getBoundingClientRect();
-                const ratio=Math.max(0.05,Math.min(0.95,(e.clientX-rect.left)/rect.width));
-                onSplitBlock(block.id,ratio*(block.audioBuffer?block.audioBuffer.duration:block.durationSec));
-              }:undefined}>
-              {splitMode&&splitMode.blockId===block.id&&<div style={{position:'absolute',top:-16,left:0,right:0,textAlign:'center',fontSize:9,color:'#facc15',fontFamily:'monospace',pointerEvents:'none',zIndex:10}}>✂ ここをタップして分割</div>}
-              <MiniWave audioBuffer={block.audioBuffer} color={GOLD}/>
-              <div style={{position:'absolute',bottom:2,left:4,right:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.8}}>{block.bars}小節</span>
-                <button onClick={()=>onDeleteBlock(block.id)} style={{background:'rgba(239,68,68,0.2)',
-                  border:'1px solid rgba(239,68,68,0.3)',borderRadius:3,color:'#f87171',fontSize:9,padding:'0 4px',cursor:'pointer',lineHeight:'14px'}}>✕</button>
+            {(()=>{
+              const isSplit=splitMode&&splitMode.blockId===block.id;
+              const dur=block.audioBuffer?block.audioBuffer.duration:block.durationSec||1;
+              const trimS=block.trimStart||0;
+              const trimE=block.trimEnd||dur;
+              return(
+            <div key={block.id} style={{position:'absolute',top:4,left,width,
+              height:'calc(100% - 8px)',userSelect:'none',
+              borderRadius:6,overflow:'visible'}}>
+              {/* 本体 */}
+              <div style={{position:'absolute',inset:0,borderRadius:6,overflow:'hidden',
+                background:isSplit?'rgba(250,204,21,0.1)':'rgba(200,169,110,0.15)',
+                border:isSplit?'2px solid #facc15':'1px solid rgba(200,169,110,0.45)',
+                cursor:isSplit?'crosshair':'default'}}
+                onClick={isSplit?e=>{
+                  const rect=e.currentTarget.getBoundingClientRect();
+                  const ratio=Math.max(0.05,Math.min(0.95,(e.clientX-rect.left)/rect.width));
+                  onSplitBlock(block.id,ratio*dur);
+                }:undefined}>
+                {/* トリムオーバーレイ */}
+                {trimS>0&&<div style={{position:'absolute',top:0,left:0,bottom:0,
+                  width:`${(trimS/dur)*100}%`,
+                  background:'rgba(0,0,0,0.6)',zIndex:2,pointerEvents:'none'}}/>}
+                {trimE<dur-0.01&&<div style={{position:'absolute',top:0,right:0,bottom:0,
+                  width:`${((dur-trimE)/dur)*100}%`,
+                  background:'rgba(0,0,0,0.6)',zIndex:2,pointerEvents:'none'}}/>}
+                <MiniWave audioBuffer={block.audioBuffer} color={GOLD}/>
+                {/* 分割ガイド */}
+                {isSplit&&<div style={{position:'absolute',inset:0,display:'flex',
+                  alignItems:'center',justifyContent:'center',
+                  background:'rgba(250,204,21,0.05)',pointerEvents:'none'}}>
+                  <span style={{fontSize:10,color:'#facc15',fontFamily:'monospace',
+                    fontWeight:700,letterSpacing:'0.05em',
+                    textShadow:'0 0 8px rgba(250,204,21,0.8)'}}>
+                    ✂ 分割位置をタップ
+                  </span>
+                </div>}
+                {/* 下部ボタン */}
+                <div style={{position:'absolute',bottom:2,left:4,right:4,display:'flex',
+                  justifyContent:'space-between',alignItems:'center',zIndex:3}}>
+                  <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.85}}>
+                    {block.bars}小節
+                  </span>
+                  <div style={{display:'flex',gap:3}}>
+                    {/* ✂ 分割ボタン */}
+                    <button onClick={e=>{e.stopPropagation();
+                      onSetSplitMode(isSplit?null:{trackId:track.id,blockId:block.id});
+                    }} style={{
+                      background:isSplit?'rgba(250,204,21,0.3)':'rgba(255,255,255,0.1)',
+                      border:isSplit?'1px solid #facc15':'1px solid rgba(255,255,255,0.2)',
+                      borderRadius:3,color:isSplit?'#facc15':'#94a3b8',
+                      fontSize:11,padding:'1px 5px',cursor:'pointer',lineHeight:'14px',
+                      fontWeight:700,
+                    }}>✂</button>
+                    {/* ↓ ダウンロード */}
+                    <button onClick={e=>{e.stopPropagation();
+                      onDownload(block.audioBuffer,block.rawBlob,`${track.name}_bar${block.startBar}`);
+                    }} style={{background:'rgba(99,102,241,0.2)',
+                      border:'1px solid rgba(99,102,241,0.4)',
+                      borderRadius:3,color:'#818cf8',fontSize:10,padding:'1px 5px',
+                      cursor:'pointer',lineHeight:'14px'}}>↓</button>
+                    {/* ✕ 削除 */}
+                    <button onClick={e=>{e.stopPropagation();onDeleteBlock(block.id);}}
+                      style={{background:'rgba(239,68,68,0.2)',
+                        border:'1px solid rgba(239,68,68,0.35)',
+                        borderRadius:3,color:'#f87171',fontSize:10,padding:'1px 5px',
+                        cursor:'pointer',lineHeight:'14px'}}>✕</button>
+                  </div>
+                </div>
               </div>
-            </div>
+              {/* ── トリムハンドル（左） */}
+              {!isSplit&&<TrimHandle side='left' onDrag={dx=>{
+                const secPerPx=barDurSec/cellW;
+                onTrimBlock(block.id,'start',dx*secPerPx);
+              }}/>}
+              {/* ── トリムハンドル（右） */}
+              {!isSplit&&<TrimHandle side='right' onDrag={dx=>{
+                const secPerPx=barDurSec/cellW;
+                onTrimBlock(block.id,'end',dx*secPerPx);
+              }}/>}
+            </div>);
+            })()}
           );
         })}
         {isRec&&(()=>{
