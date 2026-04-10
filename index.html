@@ -888,6 +888,7 @@ function App(){
   function startActualRecording(trackId,stream,audioStartT){
     const barsNow=barsRef.current, bpmNow=bpmRef.current;
     const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
+    recTrackIdRef.current=trackId; // ★必ずplayAllImplの前
     playAllImpl(recTracksRef.current,impTracksRef.current,true);
     scheduleBeatMetro(audioStartT,barsNow*BEATS_PER_BAR);
 
@@ -895,7 +896,7 @@ function App(){
     const recTrack=recTracksRef.current.find(t=>t.id===trackId);
     if(recTrack?.fx?.preset!=='none') startMonitor(stream,recTrack.fx);
 
-    chunksRef.current=[]; recTrackIdRef.current=trackId;
+    chunksRef.current=[];
     const mr=new MediaRecorder(stream); mrRef.current=mr;
     mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
     mr.start(100);
