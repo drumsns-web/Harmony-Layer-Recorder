@@ -394,7 +394,7 @@ function Chip({label,active,onClick,disabled,color}){
     cursor:disabled?'not-allowed':'pointer',fontFamily:'monospace',opacity:disabled?0.38:1,transition:'all 0.13s'
   }}>{label}</button>);
 }
-function TransportBar({bpm,onBpm,bars,onBars,disabled,onTap,tapActive,onPreview,previewing}){
+function TransportBar({bpm,onBpm,bars,onBars,disabled,onTap,tapActive,onPreview,previewing,defaultBars,onSaveDefaultBars}){
   return(
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',
       background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',
@@ -416,8 +416,17 @@ function TransportBar({bpm,onBpm,bars,onBars,disabled,onTap,tapActive,onPreview,
         {previewing?'■ STOP':'▶ CLICK'}</button>
       <div style={{width:1,height:18,background:'rgba(255,255,255,0.08)',margin:'0 2px'}}/>
       <span style={{fontSize:10,color:'#475569',letterSpacing:'0.1em'}}>BARS</span>
-      {BAR_OPTIONS.map(b=><Chip key={b} label={b} active={bars===b} onClick={()=>onBars(b)} disabled={disabled} color={bars===b?GOLD_LT:null}/>)}
-      <span style={{fontSize:10,color:'#1e293b',fontFamily:'monospace'}}>={((bars*BEATS_PER_BAR*60)/bpm).toFixed(1)}s</span>
+      {BAR_OPTIONS.map(b=>(
+        <div key={b} style={{position:'relative',display:'inline-flex'}}>
+          <Chip label={b} active={bars===b} onClick={()=>onBars(b)} disabled={disabled} color={bars===b?GOLD_LT:null}/>
+          {b===defaultBars&&<span style={{position:'absolute',top:-5,right:-3,fontSize:8,color:GOLD,lineHeight:1,pointerEvents:'none'}}>★</span>}
+        </div>
+      ))}
+      <span style={{fontSize:10,color:'#64748b',fontFamily:'monospace'}}>約{((bars*BEATS_PER_BAR*60)/bpm).toFixed(1)}秒</span>
+      <button onClick={onSaveDefaultBars} disabled={disabled} style={{
+        background:'rgba(200,169,110,0.12)',border:'1px solid rgba(200,169,110,0.3)',
+        borderRadius:6,color:GOLD,fontSize:9,padding:'3px 7px',cursor:'pointer',
+        fontFamily:'monospace',whiteSpace:'nowrap',opacity:disabled?0.4:1}}>★ デフォルト</button>
     </div>
   );
 }
@@ -454,9 +463,40 @@ function TimelineRuler({totalBars,cellW}){
   );
 }
 
+
+// ── Trim Handle ─────────────────────────────────────────────────
+function TrimHandle({side, onDrag}) {
+  const dragging=useRef(false), startX=useRef(0), barRef=useRef(null);
+  function setVis(on){
+    if(!barRef.current)return;
+    barRef.current.style.background=on?'#facc15':'rgba(200,169,110,0.95)';
+    barRef.current.style.boxShadow=on?'0 0 8px rgba(250,204,21,0.9)':'0 0 4px rgba(200,169,110,0.6)';
+  }
+  function start(cx){dragging.current=true;startX.current=cx;setVis(true);
+    window.addEventListener('pointermove',mv,{passive:false});window.addEventListener('pointerup',up);
+    window.addEventListener('touchmove',mvt,{passive:false});window.addEventListener('touchend',up);}
+  function mv(e){if(!dragging.current)return;e.preventDefault();const dx=e.clientX-startX.current;startX.current=e.clientX;onDrag(dx);}
+  function mvt(e){if(!dragging.current)return;e.preventDefault();const dx=e.touches[0].clientX-startX.current;startX.current=e.touches[0].clientX;onDrag(dx);}
+  function up(){dragging.current=false;setVis(false);
+    window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);
+    window.removeEventListener('touchmove',mvt);window.removeEventListener('touchend',up);}
+  return(
+    <div onPointerDown={e=>{e.stopPropagation();e.preventDefault();start(e.clientX);}}
+      onTouchStart={e=>{e.stopPropagation();e.preventDefault();start(e.touches[0].clientX);}}
+      style={{position:'absolute',top:0,bottom:0,[side]:-8,width:24,
+        cursor:side==='left'?'w-resize':'e-resize',zIndex:20,
+        display:'flex',alignItems:'center',justifyContent:'center',touchAction:'none'}}>
+      <div ref={barRef} style={{width:4,height:30,borderRadius:3,
+        background:'rgba(200,169,110,0.95)',
+        boxShadow:'0 0 4px rgba(200,169,110,0.6)',
+        transition:'background 0.1s,box-shadow 0.1s'}}/>
+    </div>
+  );
+}
+
 // ── Rec Track Row ───────────────────────────────────────────────
 function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onRecord,onStop,
-  onMute,onSolo,onDelete,onDeleteBlock,micStream,playTimeSec,onToggleSelfMonitor,onChangeFx,onToggleFx}){
+  onMute,onSolo,onDelete,onDeleteBlock,onTrimBlock,onSplitBlock,splitMode,onSetSplitMode,micStream,playTimeSec,onToggleSelfMonitor,onChangeFx,onToggleFx}){
   const level=useLevelMeter(track.recording?micStream:null);
   const isRec=track.recording;
   return(
@@ -510,16 +550,50 @@ function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onR
           const barDurSec=(60/bpm)*BEATS_PER_BAR;
           const actualBars=block.audioBuffer?block.audioBuffer.duration/barDurSec:block.bars;
           const width=actualBars*cellW;
+          const isSplit=splitMode&&splitMode.blockId===block.id;
+          const dur=block.audioBuffer?block.audioBuffer.duration:block.durationSec||1;
+          const trimS=block.trimStart||0, trimE=block.trimEnd||dur;
           return(
-            <div key={block.id} style={{position:'absolute',top:4,left,width,height:'calc(100% - 8px)',
-              background:'rgba(200,169,110,0.15)',border:'1px solid rgba(200,169,110,0.35)',
-              borderRadius:6,overflow:'hidden'}}>
-              <MiniWave audioBuffer={block.audioBuffer} color={GOLD}/>
-              <div style={{position:'absolute',bottom:2,left:4,right:4,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.8}}>{block.bars}小節</span>
-                <button onClick={()=>onDeleteBlock(block.id)} style={{background:'rgba(239,68,68,0.2)',
-                  border:'1px solid rgba(239,68,68,0.3)',borderRadius:3,color:'#f87171',fontSize:9,padding:'0 4px',cursor:'pointer',lineHeight:'14px'}}>✕</button>
+            <div key={block.id} style={{position:'absolute',top:4,left,width,
+              height:'calc(100% - 8px)',userSelect:'none',overflow:'visible'}}>
+              <div style={{position:'absolute',inset:0,borderRadius:6,overflow:'hidden',
+                background:isSplit?'rgba(250,204,21,0.08)':'rgba(200,169,110,0.12)',
+                border:isSplit?'2px solid #facc15':'1px solid rgba(200,169,110,0.4)',
+                cursor:isSplit?'crosshair':'default'}}
+                onClick={isSplit?e=>{
+                  const rect=e.currentTarget.getBoundingClientRect();
+                  const ratio=Math.max(0.05,Math.min(0.95,(e.clientX-rect.left)/rect.width));
+                  onSplitBlock(block.id,ratio*dur);
+                }:undefined}>
+                {trimS>0&&<div style={{position:'absolute',top:0,left:0,bottom:0,
+                  width:`${(trimS/dur)*100}%`,background:'rgba(0,0,0,0.6)',zIndex:2,pointerEvents:'none'}}/>}
+                {trimE<dur-0.01&&<div style={{position:'absolute',top:0,right:0,bottom:0,
+                  width:`${((dur-trimE)/dur)*100}%`,background:'rgba(0,0,0,0.6)',zIndex:2,pointerEvents:'none'}}/>}
+                <MiniWave audioBuffer={block.audioBuffer} color={GOLD}/>
+                {isSplit&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',
+                  justifyContent:'center',pointerEvents:'none'}}>
+                  <span style={{fontSize:10,color:'#facc15',fontWeight:700,fontFamily:'monospace',
+                    textShadow:'0 0 8px rgba(250,204,21,0.8)'}}>✂ タップして分割</span>
+                </div>}
+                <div style={{position:'absolute',bottom:2,left:3,right:3,display:'flex',
+                  justifyContent:'space-between',alignItems:'center',zIndex:3}}>
+                  <span style={{fontSize:9,fontFamily:'monospace',color:GOLD,opacity:0.85}}>{block.bars}小節</span>
+                  <div style={{display:'flex',gap:2}}>
+                    <button onClick={e=>{e.stopPropagation();onSetSplitMode(isSplit?null:{trackId:track.id,blockId:block.id});}}
+                      title='分割'
+                      style={{background:isSplit?'rgba(250,204,21,0.3)':'rgba(255,255,255,0.08)',
+                        border:isSplit?'1px solid #facc15':'1px solid rgba(255,255,255,0.15)',
+                        borderRadius:3,color:isSplit?'#facc15':'#94a3b8',
+                        fontSize:11,padding:'0 4px',cursor:'pointer',lineHeight:'14px',fontWeight:700}}>✂</button>
+                    <button onClick={e=>{e.stopPropagation();onDeleteBlock(block.id);}}
+                      title='削除'
+                      style={{background:'rgba(239,68,68,0.18)',border:'1px solid rgba(239,68,68,0.3)',
+                        borderRadius:3,color:'#f87171',fontSize:10,padding:'0 4px',cursor:'pointer',lineHeight:'14px'}}>✕</button>
+                  </div>
+                </div>
               </div>
+              {!isSplit&&<TrimHandle side='left' onDrag={dx=>onTrimBlock(block.id,'start',dx*barDurSec/cellW)}/>}
+              {!isSplit&&<TrimHandle side='right' onDrag={dx=>onTrimBlock(block.id,'end',dx*barDurSec/cellW)}/>}
             </div>
           );
         })}
@@ -631,7 +705,14 @@ function App(){
   const [recTracks,setRecTracks]=useState(()=>[makeRecTrack(1),makeRecTrack(2),makeRecTrack(3)]);
   const [impTracks,setImpTracks]=useState(()=>[makeImpTrack(1)]);
   const [bpm,setBpm]=useState(DEFAULT_BPM);
-  const [bars,setBars]=useState(4);
+  const [bars,setBars]=useState(()=>{
+    try{const v=parseInt(localStorage.getItem('hlr_defaultBars'));
+      return [1,2,4,8,16].includes(v)?v:4;}catch{return 4;}
+  });
+  const [defaultBars,setDefaultBars]=useState(()=>{
+    try{const v=parseInt(localStorage.getItem('hlr_defaultBars'));
+      return [1,2,4,8,16].includes(v)?v:4;}catch{return 4;}
+  });
   const [isPlaying,setIsPlaying]=useState(false);
   const [isLooping,setIsLooping]=useState(false);
   const [permDenied,setPermDenied]=useState(false);
@@ -641,6 +722,8 @@ function App(){
   const [beatOn,setBeatOn]=useState(false);
   const [beatsDone,setBeatsDone]=useState(0);
   const [playPos,setPlayPos]=useState(null);
+  const [splitMode,setSplitMode]=useState(null);
+  const [downloadTarget,setDownloadTarget]=useState(null);
   const [tapTimes,setTapTimes]=useState([]);
   const [tapActive,setTapActive]=useState(false);
   const [previewing,setPreviewing]=useState(false);
@@ -788,8 +871,8 @@ function App(){
     const ctx=getCtx(), beatSec=60/bpmRef.current, flashMs=Math.min(beatSec*1000*0.35,145);
     beatMetroTimers.current.forEach(clearTimeout); beatMetroTimers.current=[];
     for(let i=0;i<totalBeats;i++){
-      const beatT=startAudioT+i*beatSec, onMs=(beatT-ctx.currentTime)*1000;
-      if(onMs<0)continue;
+      const beatT=startAudioT+i*beatSec, onMs=Math.max(0,(beatT-ctx.currentTime)*1000);
+      if(onMs<0&&i>0)continue; // 最初のビートは必ず表示
       beatMetroTimers.current.push(
         setTimeout(()=>{setBeat((i%BEATS_PER_BAR)+1);setBeatOn(true);setBeatsDone(i+1);},onMs),
         setTimeout(()=>setBeatOn(false),onMs+flashMs)
@@ -833,7 +916,7 @@ function App(){
       setRecTracks(prev=>prev.map(t=>{
         if(t.id!==trackId)return t;
         const nextBar=t.blocks.reduce((m,b)=>Math.max(m,b.startBar+b.bars),1);
-        return{...t,recording:false,blocks:[...t.blocks,{id:uid(),startBar:nextBar,bars:barsUsed,audioBuffer:buf,durationSec:buf.duration}]};
+        return{...t,recording:false,blocks:[...t.blocks,{id:uid(),startBar:nextBar,bars:barsUsed,audioBuffer:buf,durationSec:buf.duration,trimStart:0,trimEnd:buf.duration}]};
       }));
       recTrackIdRef.current=null; setBeatsDone(0); setBeatOn(false); setBeat(0);
     };
@@ -905,6 +988,40 @@ function App(){
   const mutRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,muted:!t.muted}:t));
   const solRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,soloed:!t.soloed}:t));
   const delRec=id=>setRecTracks(p=>p.filter(t=>t.id!==id));
+  const trimBlock=(tid,bid,side,deltaSec)=>setRecTracks(p=>p.map(t=>{
+    if(t.id!==tid)return t;
+    return{...t,blocks:t.blocks.map(b=>{
+      if(b.id!==bid)return b;
+      const dur=b.audioBuffer?b.audioBuffer.duration:b.durationSec||1;
+      if(side==='start'){const ns=Math.max(0,Math.min((b.trimEnd||dur)-0.1,(b.trimStart||0)+deltaSec));return{...b,trimStart:ns};}
+      else{const ne=Math.max((b.trimStart||0)+0.1,Math.min(dur,(b.trimEnd||dur)+deltaSec));return{...b,trimEnd:ne};}
+    })}
+  }));
+  const splitBlock=async(tid,bid,splitSec)=>{
+    const ctx=getCtx();
+    const track=recTracksRef.current.find(t=>t.id===tid);
+    if(!track)return;
+    const block=track.blocks.find(b=>b.id===bid);
+    if(!block||!block.audioBuffer)return;
+    const dur=block.audioBuffer.duration;
+    const sc=Math.max(0.05,Math.min(dur-0.05,splitSec));
+    const ch=block.audioBuffer.numberOfChannels, sr=ctx.sampleRate;
+    const [lb,rb]=await Promise.all([
+      (async()=>{const o=new OfflineAudioContext(ch,Math.max(1,Math.floor(sc*sr)),sr);const s=o.createBufferSource();s.buffer=block.audioBuffer;s.connect(o.destination);s.start(0,0,sc);return o.startRendering();})(),
+      (async()=>{const rem=dur-sc;if(rem<0.01)return null;const o=new OfflineAudioContext(ch,Math.max(1,Math.floor(rem*sr)),sr);const s=o.createBufferSource();s.buffer=block.audioBuffer;s.connect(o.destination);s.start(0,sc,rem);return o.startRendering();})(),
+    ]);
+    if(!lb||!rb){setSplitMode(null);return;}
+    const barDurSec=(60/bpmRef.current)*BEATS_PER_BAR;
+    const lBars=Math.max(1,Math.round(lb.duration/barDurSec));
+    setRecTracks(p=>p.map(t=>{
+      if(t.id!==tid)return t;
+      const idx=t.blocks.findIndex(b=>b.id===bid);
+      const lB={id:uid(),startBar:block.startBar,bars:lBars,audioBuffer:lb,durationSec:lb.duration,trimStart:0,trimEnd:lb.duration};
+      const rB={id:uid(),startBar:block.startBar+lBars,bars:Math.max(1,block.bars-lBars),audioBuffer:rb,durationSec:rb.duration,trimStart:0,trimEnd:rb.duration};
+      return{...t,blocks:[...t.blocks.slice(0,idx),lB,rB,...t.blocks.slice(idx+1)]};
+    }));
+    setSplitMode(null);
+  };
   const delBlock=(tid,bid)=>setRecTracks(p=>p.map(t=>t.id===tid?{...t,blocks:t.blocks.filter(b=>b.id!==bid)}:t));
   const toggleSelfMonitor=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,selfMonitor:!t.selfMonitor}:t));
   const toggleFxRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,fxOpen:!t.fxOpen}:t));
@@ -961,7 +1078,9 @@ function App(){
       )}
 
       <TransportBar bpm={bpm} onBpm={setBpm} bars={bars} onBars={setBars} disabled={anyActive}
-        onTap={handleTap} tapActive={tapActive} onPreview={handlePreview} previewing={previewing}/>
+        onTap={handleTap} tapActive={tapActive} onPreview={handlePreview} previewing={previewing}
+        defaultBars={defaultBars}
+        onSaveDefaultBars={()=>{try{localStorage.setItem('hlr_defaultBars',bars);}catch{}setDefaultBars(bars);}}/>
       <BeatDisplay beat={beat} beatOn={beatOn} countingIn={countingIn} isRecording={isRecording}
         bpm={bpm} barCount={bars} beatsDone={beatsDone} totalBeats={totalBeatsDuringRec}/>
 
@@ -988,6 +1107,10 @@ function App(){
                 onRecord={()=>handleRecord(track.id)} onStop={()=>handleStop(track.id)}
                 onMute={()=>mutRec(track.id)} onSolo={()=>solRec(track.id)} onDelete={()=>delRec(track.id)}
                 onDeleteBlock={bid=>delBlock(track.id,bid)}
+                onTrimBlock={(bid,side,delta)=>trimBlock(track.id,bid,side,delta)}
+                onSplitBlock={(bid,sec)=>splitBlock(track.id,bid,sec)}
+                splitMode={splitMode}
+                onSetSplitMode={setSplitMode}
                 onToggleSelfMonitor={()=>toggleSelfMonitor(track.id)}
                 onToggleFx={()=>toggleFxRec(track.id)}
                 onChangeFx={fx=>changeFxRec(track.id,fx)}
