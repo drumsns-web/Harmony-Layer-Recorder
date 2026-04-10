@@ -954,8 +954,44 @@ function App(){
   async function handleRecord(trackId){
     const stream=await getMic(); if(!stream)return;
     if(previewing){clearTimeout(previewTimerRef.current);setPreviewing(false);}
-    setCountingIn(true); setBeatsDone(0);
-    scheduleCountIn(audioStartT=>startActualRecording(trackId,stream,audioStartT));
+
+    const track=recTracksRef.current.find(t=>t.id===trackId);
+    const hasPrev=track&&track.blocks.length>0&&track.selfMonitor;
+
+    if(hasPrev){
+      // 「前を聴く」ON: 頭から再生 → 既存ブロック終了位置で自動録音開始
+      const bpmNow=bpmRef.current;
+      const barDurSec=(60/bpmNow)*BEATS_PER_BAR;
+      const existingBars=track.blocks.reduce((s,b)=>s+b.bars,0);
+      const waitSec=existingBars*barDurSec;
+      const barsNow=barsRef.current;
+
+      // 全トラックを頭から再生（自分の過去音含む）
+      recTrackIdRef.current=null;
+      await playAllImpl(recTracksRef.current,impTracksRef.current,false,false);
+
+      // プレイヘッドが既存ブロック終端に来たら録音開始
+      countInTimers.current.forEach(clearTimeout);
+      countInTimers.current=[setTimeout(async()=>{
+        // 録音開始
+        recTrackIdRef.current=trackId;
+        chunksRef.current=[];
+        const mr=new MediaRecorder(stream); mrRef.current=mr;
+        mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
+        mr.start(100);
+        setRecTracks(prev=>prev.map(t=>t.id===trackId?{...t,recording:true}:t));
+        setBeatsDone(0);
+        const recTrack=recTracksRef.current.find(t=>t.id===trackId);
+        if(recTrack?.fx?.preset!=='none') startMonitor(stream,recTrack.fx);
+        const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
+        recTimerRef.current=setTimeout(()=>finalizeRec(trackId,barsNow),durSec*1000+80);
+      },waitSec*1000)];
+
+    } else {
+      // 通常: カウントイン→録音
+      setCountingIn(true); setBeatsDone(0);
+      scheduleCountIn(audioStartT=>startActualRecording(trackId,stream,audioStartT));
+    }
   }
   function handleStop(trackId){
     if(countingIn){countInTimers.current.forEach(clearTimeout);setCountingIn(false);setBeat(0);setBeatOn(false);return;}
