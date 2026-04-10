@@ -496,7 +496,7 @@ function TrimHandle({side, onDrag}) {
 
 // ── Rec Track Row ───────────────────────────────────────────────
 function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onRecord,onStop,
-  onMute,onSolo,onDelete,onDeleteBlock,onTrimBlock,onSplitBlock,splitMode,onSetSplitMode,micStream,playTimeSec,onToggleSelfMonitor,onChangeFx,onToggleFx}){
+  onMute,onSolo,onDelete,onDeleteBlock,onTrimBlock,onSplitBlock,splitMode,onSetSplitMode,onMoveBlock,micStream,playTimeSec,onToggleSelfMonitor,onChangeFx,onToggleFx}){
   const level=useLevelMeter(track.recording?micStream:null);
   const isRec=track.recording;
   return(
@@ -559,11 +559,36 @@ function RecTrackRow({track,totalBars,cellW,bpm,bars,anyRecording,countingIn,onR
               <div style={{position:'absolute',inset:0,borderRadius:6,overflow:'hidden',
                 background:isSplit?'rgba(250,204,21,0.08)':'rgba(200,169,110,0.12)',
                 border:isSplit?'2px solid #facc15':'1px solid rgba(200,169,110,0.4)',
-                cursor:isSplit?'crosshair':'default'}}
+                cursor:isSplit?'crosshair':'grab'}}
                 onClick={isSplit?e=>{
                   const rect=e.currentTarget.getBoundingClientRect();
                   const ratio=Math.max(0.05,Math.min(0.95,(e.clientX-rect.left)/rect.width));
                   onSplitBlock(block.id,ratio*dur);
+                }:undefined}
+                onPointerDown={!isSplit?e=>{
+                  e.stopPropagation();
+                  const startX=e.clientX;
+                  let moved=false;
+                  const el=e.currentTarget;
+                  el.style.opacity='0.7';el.style.cursor='grabbing';
+                  function onMove(ev){
+                    moved=true;
+                    const dx=ev.clientX-startX;
+                    const deltaBars=Math.round(dx/cellW);
+                    el.style.transform=`translateX(${dx}px)`;
+                  }
+                  function onUp(ev){
+                    el.style.opacity='1';el.style.cursor='grab';el.style.transform='';
+                    window.removeEventListener('pointermove',onMove);
+                    window.removeEventListener('pointerup',onUp);
+                    if(moved){
+                      const dx=ev.clientX-startX;
+                      const deltaBars=Math.round(dx/cellW);
+                      if(deltaBars!==0)onMoveBlock(block.id,deltaBars);
+                    }
+                  }
+                  window.addEventListener('pointermove',onMove);
+                  window.addEventListener('pointerup',onUp);
                 }:undefined}>
                 {trimS>0&&<div style={{position:'absolute',top:0,left:0,bottom:0,
                   width:`${(trimS/dur)*100}%`,background:'rgba(0,0,0,0.6)',zIndex:2,pointerEvents:'none'}}/>}
@@ -949,7 +974,26 @@ function App(){
       const isCurrentlyRec=track.id===recTrackIdRef.current;
       if(overdub&&isCurrentlyRec&&!track.selfMonitor)continue;
       const audible=overdub?true:(hasSolo?track.soloed:!track.muted);
-      const bufs=track.blocks.map(b=>b.audioBuffer).filter(Boolean);
+      // トリムを適用してから結合
+      const trimmedBufs=[];
+      for(const b of track.blocks){
+        if(!b.audioBuffer)continue;
+        const ts=b.trimStart||0;
+        const te=b.trimEnd!=null?b.trimEnd:b.audioBuffer.duration;
+        const dur=b.audioBuffer.duration;
+        if(ts<=0.001&&te>=dur-0.001){
+          trimmedBufs.push(b.audioBuffer);
+        } else {
+          try{
+            const len=Math.max(1,Math.floor((te-ts)*ctx.sampleRate));
+            const off=new OfflineAudioContext(b.audioBuffer.numberOfChannels,len,ctx.sampleRate);
+            const src=off.createBufferSource();src.buffer=b.audioBuffer;src.connect(off.destination);
+            src.start(0,ts,te-ts);
+            trimmedBufs.push(await off.startRendering());
+          }catch{trimmedBufs.push(b.audioBuffer);}
+        }
+      }
+      const bufs=trimmedBufs.filter(Boolean);
       if(!bufs.length)continue;
       let buf; try{buf=await concatBuffers(bufs,ctx.sampleRate);}catch{continue;}
       if(!buf)continue;
@@ -991,6 +1035,14 @@ function App(){
   const mutRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,muted:!t.muted}:t));
   const solRec=id=>setRecTracks(p=>p.map(t=>t.id===id?{...t,soloed:!t.soloed}:t));
   const delRec=id=>setRecTracks(p=>p.filter(t=>t.id!==id));
+  const moveBlock=(tid,bid,deltaBars)=>setRecTracks(p=>p.map(t=>{
+    if(t.id!==tid)return t;
+    return{...t,blocks:t.blocks.map(b=>{
+      if(b.id!==bid)return b;
+      const newStart=Math.max(1,Math.round(b.startBar+deltaBars));
+      return{...b,startBar:newStart};
+    })};
+  }));
   const trimBlock=(tid,bid,side,deltaSec)=>setRecTracks(p=>p.map(t=>{
     if(t.id!==tid)return t;
     return{...t,blocks:t.blocks.map(b=>{
@@ -1128,6 +1180,7 @@ function App(){
                 onSplitBlock={(bid,sec)=>splitBlock(track.id,bid,sec)}
                 splitMode={splitMode}
                 onSetSplitMode={setSplitMode}
+                onMoveBlock={(bid,delta)=>moveBlock(track.id,bid,delta)}
                 onToggleSelfMonitor={()=>toggleSelfMonitor(track.id)}
                 onToggleFx={()=>toggleFxRec(track.id)}
                 onChangeFx={fx=>changeFxRec(track.id,fx)}
