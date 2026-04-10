@@ -227,59 +227,61 @@ async function trimAudioBuffer(buffer, startSec, endSec, sampleRate) {
 }
 
 async function downloadMp3(audioBuffer, filename, bitrate) {
-  bitrate = bitrate || 128;
+  // Use native browser MediaRecorder for compressed audio
+  // iOS Safari -> audio/mp4 (AAC), Chrome -> audio/webm, fallback -> WAV
   return new Promise((resolve) => {
     try {
-      const ch = audioBuffer.numberOfChannels;
-      const sr = audioBuffer.sampleRate;
-      // Use OfflineAudioContext to resample to 44100 if needed
-      const targetSr = 44100;
-      
-      function doEncode(buffer) {
-        const numCh = buffer.numberOfChannels;
-        const enc = new lamejs.Mp3Encoder(numCh > 1 ? 2 : 1, targetSr, bitrate);
-        const blockSize = 1152;
-        const leftData = buffer.getChannelData(0);
-        const rightData = numCh > 1 ? buffer.getChannelData(1) : leftData;
-        const mp3Parts = [];
-        for (let i = 0; i < leftData.length; i += blockSize) {
-          const left = leftData.slice(i, i + blockSize);
-          const right = rightData.slice(i, i + blockSize);
-          const encoded = enc.encodeBuffer(left, right);
-          if (encoded.length > 0) mp3Parts.push(new Uint8Array(encoded));
-        }
-        const flushed = enc.flush();
-        if (flushed.length > 0) mp3Parts.push(new Uint8Array(flushed));
-        // Merge all parts
-        const totalLen = mp3Parts.reduce((s,p)=>s+p.length,0);
-        const merged = new Uint8Array(totalLen);
-        let offset = 0;
-        for (const part of mp3Parts) { merged.set(part, offset); offset += part.length; }
-        const blob = new Blob([merged], { type: 'audio/mpeg' });
+      const ctx = new (window.AudioContext||window.webkitAudioContext)();
+      const dest = ctx.createMediaStreamDestination();
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(dest);
+
+      // Pick best supported format
+      const formats = ['audio/mp4','audio/mpeg','audio/webm;codecs=opus','audio/webm','audio/ogg'];
+      const mimeType = formats.find(f => { try{return MediaRecorder.isTypeSupported(f);}catch{return false;} }) || '';
+
+      if (!mimeType) {
+        // Fallback: WAV download
+        ctx.close();
+        const blob = audioBufferToWav(audioBuffer);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = filename + '.mp3';
+        a.href = url; a.download = filename + '.wav';
         document.body.appendChild(a); a.click();
         document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        setTimeout(()=>URL.revokeObjectURL(url),2000);
+        alert('このブラウザはMP3未対応のためWAVで保存しました');
+        resolve(false); return;
+      }
+
+      const mr = new MediaRecorder(dest.stream, {
+        mimeType,
+        audioBitsPerSecond: (bitrate||128) * 1000
+      });
+      const chunks = [];
+      mr.ondataavailable = e => { if(e.data.size>0) chunks.push(e.data); };
+      mr.onstop = () => {
+        ctx.close();
+        const ext = mimeType.includes('mp4') ? 'm4a'
+                  : mimeType.includes('mpeg') ? 'mp3'
+                  : mimeType.includes('ogg') ? 'ogg' : 'webm';
+        const blob = new Blob(chunks, {type: mimeType});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename + '.' + ext;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        setTimeout(()=>URL.revokeObjectURL(url),2000);
         resolve(true);
-      }
-      
-      // Resample to 44100 if needed using OfflineAudioContext
-      if (sr !== targetSr) {
-        const targetLen = Math.ceil(audioBuffer.length * targetSr / sr);
-        const offline = new OfflineAudioContext(audioBuffer.numberOfChannels, targetLen, targetSr);
-        const src = offline.createBufferSource();
-        src.buffer = audioBuffer;
-        src.connect(offline.destination);
-        src.start(0);
-        offline.startRendering().then(doEncode).catch(()=>{ doEncode(audioBuffer); });
-      } else {
-        doEncode(audioBuffer);
-      }
+      };
+      mr.start();
+      src.start(0);
+      // Stop after audio duration + small buffer
+      setTimeout(()=>{ try{mr.stop();}catch{} }, audioBuffer.duration*1000 + 300);
     } catch(e) {
-      console.error('MP3 encode error:', e);
-      alert('MP3変換に失敗しました: ' + e.message);
+      console.error('encode error:', e);
+      alert('変換に失敗しました: ' + e.message);
       resolve(false);
     }
   });
@@ -603,7 +605,7 @@ function DownloadModal({ audioBuffer, rawBlob, filename, onClose }) {
           background:'rgba(255,255,255,0.04)',borderRadius:6,padding:'6px 10px'}}>{filename}</div>
         <div style={{fontSize:11,color:'#64748b',fontFamily:'monospace',marginBottom:8}}>フォーマット</div>
         <div style={{display:'flex',gap:6,marginBottom:16}}>
-          {[{id:'wav',label:'WAV',sub:'高音質・大容量'},{id:'mp3',label:'MP3',sub:'圧縮・小容量'},{id:'webm',label:'WebM',sub:'圧縮・高互換',disabled:!rawBlob}].map(f=>(
+          {[{id:'wav',label:'WAV',sub:'高音質・大容量'},{id:'mp3',label:'AAC/MP3',sub:'圧縮（ブラウザ対応形式）'},{id:'webm',label:'WebM',sub:'圧縮・高互換',disabled:!rawBlob}].map(f=>(
             <button key={f.id} onClick={()=>!f.disabled&&setFormat(f.id)} disabled={f.disabled} style={{
               flex:1,background:format===f.id?'rgba(200,169,110,0.18)':'rgba(255,255,255,0.04)',
               border:format===f.id?'1px solid rgba(200,169,110,0.5)':'1px solid rgba(255,255,255,0.08)',
