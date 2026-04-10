@@ -482,11 +482,18 @@ function drawWave(audioBuffer, canvas, color, playPos){
   const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height;
   ctx.clearRect(0,0,W,H);
   const data=audioBuffer.getChannelData(0), step=Math.max(1,Math.floor(data.length/W)), mid=H/2;
-  ctx.fillStyle=color+'77';
+  // ピーク振幅を計算してスケールに反映（音量が波形高さに正直に出る）
+  let peak=0;
+  for(let i=0;i<data.length;i++){const a=Math.abs(data[i]);if(a>peak)peak=a;}
+  const scale=peak<0.0001?0:Math.min(1,peak);
+  ctx.fillStyle=color+'88';
   for(let x=0;x<W;x++){
-    let mn=1,mx=-1;
+    let mn=0,mx=0;
     for(let j=0;j<step;j++){const v=data[x*step+j]||0;if(v<mn)mn=v;if(v>mx)mx=v;}
-    ctx.fillRect(x,mid+mx*mid*0.9,1,Math.max(1,(mid+mn*mid*0.9)-(mid+mx*mid*0.9)));
+    const yTop=mid+mx*mid*scale;
+    const yBot=mid+mn*mid*scale;
+    const barH=Math.max(0,yBot-yTop);
+    if(barH>0) ctx.fillRect(x,yTop,1,barH);
   }
   if(playPos!=null){
     const px=Math.floor(playPos*W);
