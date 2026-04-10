@@ -624,6 +624,11 @@ function App(){
   const [beatOn,setBeatOn]=useState(false);
   const [beatsDone,setBeatsDone]=useState(0);
   const [playPos,setPlayPos]=useState(null);
+  const [micGain,setMicGain]=useState(1.0); // 0.1 ~ 3.0
+  const micGainRef=useRef(1.0);
+  const isPlayingRef=useRef(false);   // sync ref to prevent double-trigger
+  const isLoopingRef=useRef(false);   // sync ref to prevent double-trigger
+  const micGainNodeRef=useRef(null); // GainNode on mic stream
   const [tapTimes,setTapTimes]=useState([]);
   const [tapActive,setTapActive]=useState(false);
   const [previewing,setPreviewing]=useState(false);
@@ -652,6 +657,12 @@ function App(){
   useEffect(()=>{impTracksRef.current=impTracks;},[impTracks]);
   useEffect(()=>{barsRef.current=bars;},[bars]);
   useEffect(()=>{bpmRef.current=bpm;},[bpm]);
+  useEffect(()=>{isPlayingRef.current=isPlaying;},[isPlaying]);
+  useEffect(()=>{isLoopingRef.current=isLooping;},[isLooping]);
+  useEffect(()=>{
+    micGainRef.current=micGain;
+    if(micGainNodeRef.current) micGainNodeRef.current.gain.value=micGain;
+  },[micGain]);
   useEffect(()=>{micStreamRef.current=micStream;},[micStream]);
 
   const isRecording=recTracks.some(t=>t.recording);
@@ -667,9 +678,33 @@ function App(){
     return audioCtxRef.current;
   }
   async function getMic(){
-    if(micStreamRef.current)return micStreamRef.current;
-    try{const s=await navigator.mediaDevices.getUserMedia({audio:true});setMicStream(s);return s;}
+    // Always request fresh stream so iOS mic indicator stays accurate
+    if(micStreamRef.current){
+      micStreamRef.current.getTracks().forEach(t=>t.stop());
+      setMicStream(null);
+    }
+    try{
+      const rawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+      // Apply input gain node for sensitivity control
+      const ctx=getCtx();
+      const src=ctx.createMediaStreamSource(rawStream);
+      const gainNode=ctx.createGain();
+      gainNode.gain.value=micGainRef.current;
+      micGainNodeRef.current=gainNode;
+      const dest=ctx.createMediaStreamDestination();
+      src.connect(gainNode); gainNode.connect(dest);
+      const processedStream=dest.stream;
+      setMicStream(processedStream);
+      return processedStream;
+    }
     catch{setPermDenied(true);return null;}
+  }
+
+  function releaseMic(){
+    if(micStreamRef.current){
+      micStreamRef.current.getTracks().forEach(t=>t.stop());
+      setMicStream(null);
+    }
   }
 
   // ── Monitor (mic → FX → speaker, live during recording) ───────
@@ -706,7 +741,10 @@ function App(){
   // ── Stop all ────────────────────────────────────────────────────
   function stopAllPlayback(){
     playbackNodesRef.current.forEach(s=>{try{s.stop();}catch{}});
-    playbackNodesRef.current=[];setIsPlaying(false);setIsLooping(false);
+    playbackNodesRef.current=[];
+    isPlayingRef.current=false;   // reset synchronously
+    isLoopingRef.current=false;
+    setIsPlaying(false);setIsLooping(false);
     stopPlayhead(); stopMonitor();
   }
 
@@ -821,6 +859,7 @@ function App(){
         return{...t,recording:false,blocks:[...t.blocks,{id:uid(),startBar:nextBar,bars:barsUsed,audioBuffer:buf,durationSec:buf.duration}]};
       }));
       recTrackIdRef.current=null; setBeatsDone(0); setBeatOn(false); setBeat(0);
+      releaseMic(); // Release mic so iOS indicator disappears
     };
     mr.stop();
   }
@@ -877,8 +916,18 @@ function App(){
     }
   }
 
-  function handlePlayAll(){if(isPlaying||isLooping){stopAllPlayback();return;}playAllImpl(recTracks,impTracks,false,false);}
-  function handleLoopAll(){if(isLooping||isPlaying){stopAllPlayback();return;}playAllImpl(recTracks,impTracks,false,true);setIsLooping(true);}
+  function handlePlayAll(){
+    if(isPlayingRef.current||isLoopingRef.current){stopAllPlayback();return;}
+    isPlayingRef.current=true;
+    playAllImpl(recTracks,impTracks,false,false);
+  }
+  function handleLoopAll(){
+    // Use refs for synchronous guard — prevents double-trigger on fast taps
+    if(isLoopingRef.current||isPlayingRef.current){stopAllPlayback();return;}
+    isLoopingRef.current=true; // set immediately before async playAllImpl
+    playAllImpl(recTracks,impTracks,false,true);
+    setIsLooping(true);
+  }
   function handleStopAll(){
     if(previewing){clearTimeout(previewTimerRef.current);setPreviewing(false);setBeat(0);setBeatOn(false);}
     if(countingIn){countInTimers.current.forEach(clearTimeout);setCountingIn(false);setBeat(0);setBeatOn(false);return;}
@@ -947,6 +996,20 @@ function App(){
 
       <TransportBar bpm={bpm} onBpm={setBpm} bars={bars} onBars={setBars} disabled={anyActive}
         onTap={handleTap} tapActive={tapActive} onPreview={handlePreview} previewing={previewing}/>
+      {/* Mic sensitivity control */}
+      <div style={{display:'flex',alignItems:'center',gap:10,
+        background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',
+        borderRadius:10,padding:'7px 14px',marginBottom:12,width:'100%',maxWidth:760}}>
+        <span style={{fontSize:10,color:'#64748b',letterSpacing:'0.08em',minWidth:52}}>🎤 感度</span>
+        <input type='range' min={0.1} max={3.0} step={0.05} value={micGain}
+          onChange={e=>{const v=Number(e.target.value);setMicGain(v);micGainRef.current=v;if(micGainNodeRef.current)micGainNodeRef.current.gain.value=v;}}
+          style={{flex:1,accentColor:GOLD}}/>
+        <span style={{fontFamily:"'Space Mono',monospace",fontSize:12,fontWeight:700,
+          color:micGain>2?RED:micGain>1.5?'#facc15':GOLD,minWidth:36,textAlign:'right'}}>
+          {micGain>=2?'HIGH':micGain<=0.5?'LOW':Math.round(micGain*100)+'%'}
+        </span>
+        {micGain>2&&<span style={{fontSize:9,color:RED,fontFamily:'monospace'}}>⚠ 歪み注意</span>}
+      </div>
       <BeatDisplay beat={beat} beatOn={beatOn} countingIn={countingIn} isRecording={isRecording}
         bpm={bpm} barCount={bars} beatsDone={beatsDone} totalBeats={totalBeatsDuringRec}/>
 
@@ -957,7 +1020,7 @@ function App(){
         <GBtn onClick={handleLoopAll} color={GOLD} glow='rgba(200,169,110,0.28)' disabled={!hasAny||anyActive} active={isLooping}>
           {isLooping?'↺ ループ中':'↺ LOOP ALL'}
         </GBtn>
-        <GBtn onClick={handleStopAll} color='#94a3b8' glow='rgba(148,163,184,0.08)' disabled={!isPlaying&&!isLooping&&!anyActive}>⏹ STOP</GBtn>
+        <GBtn onClick={handleStopAll} color={isLooping?RED:'#94a3b8'} glow={isLooping?'rgba(239,68,68,0.35)':'rgba(148,163,184,0.08)'} disabled={!isPlaying&&!isLooping&&!anyActive} active={isLooping}>{isLooping?'⏹ ループ停止':'⏹ STOP'}</GBtn>
       </div>
 
       <div style={{width:'100%',maxWidth:760}}>
