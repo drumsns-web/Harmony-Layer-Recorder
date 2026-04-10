@@ -751,6 +751,8 @@ function App(){
   const [downloadTarget,setDownloadTarget]=useState(null);
   const [micGain,setMicGain]=useState(1.0);
   const micGainRef=useRef(1.0);
+  const [recOffset,setRecOffset]=useState(0); // 録音タイミング補正 ms
+  const recOffsetRef=useRef(0);
   const [tapTimes,setTapTimes]=useState([]);
   const [tapActive,setTapActive]=useState(false);
   const [previewing,setPreviewing]=useState(false);
@@ -762,6 +764,7 @@ function App(){
   const playbackNodesRef=useRef([]);
   const recTimerRef=useRef(null);
   const mrExtraMs=useRef(0);
+  useEffect(()=>{recOffsetRef.current=recOffset;},[recOffset]);
   const countInTimers=useRef([]);
   const beatMetroTimers=useRef([]);
   const playheadRaf=useRef(null);
@@ -993,7 +996,7 @@ function App(){
       countInTimers.current.forEach(clearTimeout);
       const msUntilRec=Math.max(0,(playStartAt+waitSec-ctx.currentTime)*1000);
       // MediaRecorderをPRE_START_MS前倒しで起動して遅延を補正
-      const PRE_START_MS=100;
+      const PRE_START_MS=250+recOffsetRef.current;
       const mrStartMs=Math.max(0,msUntilRec-PRE_START_MS);
       mrExtraMs.current=0;
       // Step1: 前倒しでMediaRecorder起動
@@ -1213,6 +1216,23 @@ function App(){
           {micGain>=2?'HIGH':micGain<=0.5?'LOW':Math.round(micGain*100)+'%'}
         </span>
         {micGain>2&&<span style={{fontSize:9,color:RED,fontFamily:'monospace'}}>⚠ 歪み注意</span>}
+      </div>
+      {/* 🎚 録音タイミング補正 */}
+      <div style={{display:'flex',alignItems:'center',gap:10,
+        background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',
+        borderRadius:10,padding:'7px 14px',marginBottom:12,width:'100%',maxWidth:760}}>
+        <span style={{fontSize:10,color:'#64748b',letterSpacing:'0.08em',minWidth:52}}>🎚 補正</span>
+        <input type='range' min={-300} max={300} step={10} value={recOffset}
+          onChange={e=>setRecOffset(Number(e.target.value))}
+          style={{flex:1,accentColor:GOLD}}/>
+        <span style={{fontFamily:"'Space Mono',monospace",fontSize:12,fontWeight:700,
+          color:Math.abs(recOffset)>150?'#facc15':GOLD,minWidth:48,textAlign:'right'}}>
+          {recOffset>0?'+':''}{recOffset}ms
+        </span>
+        <button onClick={()=>setRecOffset(0)} style={{
+          background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',
+          borderRadius:5,color:'#64748b',fontSize:9,padding:'2px 6px',cursor:'pointer',
+          fontFamily:'monospace'}}>0</button>
       </div>
       <BeatDisplay beat={beat} beatOn={beatOn} countingIn={countingIn} isRecording={isRecording}
         bpm={bpm} barCount={bars} beatsDone={beatsDone} totalBeats={totalBeatsDuringRec}/>
