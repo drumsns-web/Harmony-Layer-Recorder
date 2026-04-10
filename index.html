@@ -1331,8 +1331,57 @@ function App(){
   async function handleRecord(trackId){
     const stream=await getMic(); if(!stream)return;
     if(previewing){clearTimeout(previewTimerRef.current);setPreviewing(false);}
-    setCountingIn(true); setBeatsDone(0);
-    scheduleCountIn(audioStartT=>startActualRecording(trackId,stream,audioStartT));
+
+    const track=recTracksRef.current.find(t=>t.id===trackId);
+    const hasPrevBlocks=track&&track.blocks.length>0;
+
+    // 「前を聴く」がON かつ 過去ブロックがある場合:
+    // カウントインなしで即頭から再生し、既存ブロック分が終わったら録音開始
+    if(hasPrevBlocks&&track.selfMonitor){
+      const ctx=getCtx();
+      const bpmNow=bpmRef.current;
+      const barDurSec=(60/bpmNow)*BEATS_PER_BAR;
+      // 既存ブロックの合計小節数を計算
+      const existingBars=track.blocks.reduce((s,b)=>s+b.bars,0);
+      const waitSec=existingBars*barDurSec;
+
+      // 全トラック（自分含む）を頭から再生
+      recTrackIdRef.current=null; // まだ録音していない→自分の音も再生
+      await playAllImpl(recTracksRef.current,impTracksRef.current,false,false);
+
+      // ビートメトロ: 既存小節 + 録音小節 分を表示
+      const barsNow=barsRef.current;
+      const totalBeats=(existingBars+barsNow)*BEATS_PER_BAR;
+      const startAudioT=getCtx().currentTime; // 再生開始時刻
+      scheduleBeatMetro(startAudioT,totalBeats);
+
+      // 再生中カウント表示
+      setBeatsDone(0);
+
+      // waitSec 後に録音開始
+      countInTimers.current.forEach(clearTimeout);
+      countInTimers.current=[setTimeout(()=>{
+        // 録音開始時刻
+        const recStartT=ctx.currentTime+0.05;
+        recTrackIdRef.current=trackId;
+        chunksRef.current=[];
+        const mr=new MediaRecorder(stream); mrRef.current=mr;
+        mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
+        mr.start(100);
+        setRecTracks(prev=>prev.map(t=>t.id===trackId?{...t,recording:true}:t));
+        // FXモニター
+        const recTrack=recTracksRef.current.find(t=>t.id===trackId);
+        if(recTrack?.fx?.preset!=='none') startMonitor(stream,recTrack.fx);
+        // 録音終了タイマー
+        const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
+        recTimerRef.current=setTimeout(()=>finalizeRec(trackId,barsNow),durSec*1000+80);
+      },waitSec*1000)];
+
+    } else {
+      // 通常: カウントイン→録音
+      setCountingIn(true); setBeatsDone(0);
+      scheduleCountIn(audioStartT=>startActualRecording(trackId,stream,audioStartT));
+    }
   }
   function handleStop(trackId){
     if(countingIn){countInTimers.current.forEach(clearTimeout);setCountingIn(false);setBeat(0);setBeatOn(false);return;}
