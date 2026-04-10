@@ -761,6 +761,7 @@ function App(){
   const recTrackIdRef=useRef(null);
   const playbackNodesRef=useRef([]);
   const recTimerRef=useRef(null);
+  const mrExtraMs=useRef(0);
   const countInTimers=useRef([]);
   const beatMetroTimers=useRef([]);
   const playheadRaf=useRef(null);
@@ -941,6 +942,19 @@ function App(){
       let buf=null;
       try{buf=await getCtx().decodeAudioData(await blob.arrayBuffer());}catch{}
       if(!buf){setRecTracks(prev=>prev.map(t=>t.id===trackId?{...t,recording:false}:t));return;}
+      // 前倒し起動分の余分な先頭をトリム
+      const extraSec=(mrExtraMs.current||0)/1000;
+      mrExtraMs.current=0;
+      if(extraSec>0.02&&buf.duration>extraSec+0.1){
+        try{
+          const sr=buf.sampleRate,ch=buf.numberOfChannels;
+          const newLen=Math.floor((buf.duration-extraSec)*sr);
+          const off=new OfflineAudioContext(ch,Math.max(1,newLen),sr);
+          const s=off.createBufferSource();s.buffer=buf;s.connect(off.destination);
+          s.start(0,extraSec);
+          buf=await off.startRendering();
+        }catch(e){console.warn('pre-trim failed',e);}
+      }
       setRecTracks(prev=>prev.map(t=>{
         if(t.id!==trackId)return t;
         const nextBar=t.blocks.reduce((m,b)=>Math.max(m,b.startBar+b.bars),1);
@@ -959,33 +973,47 @@ function App(){
     const hasPrev=track&&track.blocks.length>0&&track.selfMonitor;
 
     if(hasPrev){
-      // 「前を聴く」ON: 頭から再生 → 既存ブロック終了位置で自動録音開始
+      // 「前を聴く」ON: 頭から再生 → スライドバーが録音位置に来てから録音開始
       const bpmNow=bpmRef.current;
       const barDurSec=(60/bpmNow)*BEATS_PER_BAR;
       const existingBars=track.blocks.reduce((s,b)=>s+b.bars,0);
       const waitSec=existingBars*barDurSec;
       const barsNow=barsRef.current;
 
+      // 再生開始直前のAudioContext時刻を記録
+      const ctx=getCtx();
+      const playStartAt=ctx.currentTime+0.05; // playAllImplと同じオフセット
+
       // 全トラックを頭から再生（自分の過去音含む）
       recTrackIdRef.current=null;
       await playAllImpl(recTracksRef.current,impTracksRef.current,false,false);
 
-      // プレイヘッドが既存ブロック終端に来たら録音開始
+      // playStartAt + waitSec が録音開始時刻
+      // AudioContext時間ベースで正確に合わせる
       countInTimers.current.forEach(clearTimeout);
-      countInTimers.current=[setTimeout(async()=>{
-        // 録音開始
-        recTrackIdRef.current=trackId;
+      const msUntilRec=Math.max(0,(playStartAt+waitSec-ctx.currentTime)*1000);
+      // MediaRecorderをPRE_START_MS前倒しで起動して遅延を補正
+      const PRE_START_MS=100;
+      const mrStartMs=Math.max(0,msUntilRec-PRE_START_MS);
+      mrExtraMs.current=0;
+      // Step1: 前倒しでMediaRecorder起動
+      countInTimers.current=[setTimeout(()=>{
         chunksRef.current=[];
         const mr=new MediaRecorder(stream); mrRef.current=mr;
         mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
-        mr.start(100);
+        mr.start(50);
+        mrExtraMs.current=msUntilRec-mrStartMs; // 余分に録音した先頭ms
+      },mrStartMs)];
+      // Step2: 正確なタイミングでUI更新・録音タイマー開始
+      countInTimers.current.push(setTimeout(()=>{
+        recTrackIdRef.current=trackId;
         setRecTracks(prev=>prev.map(t=>t.id===trackId?{...t,recording:true}:t));
         setBeatsDone(0);
         const recTrack=recTracksRef.current.find(t=>t.id===trackId);
         if(recTrack?.fx?.preset!=='none') startMonitor(stream,recTrack.fx);
         const durSec=(barsNow*BEATS_PER_BAR*60)/bpmNow;
         recTimerRef.current=setTimeout(()=>finalizeRec(trackId,barsNow),durSec*1000+80);
-      },waitSec*1000)];
+      },msUntilRec));
 
     } else {
       // 通常: カウントイン→録音
