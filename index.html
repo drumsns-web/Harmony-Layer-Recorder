@@ -724,6 +724,8 @@ function App(){
   const [playPos,setPlayPos]=useState(null);
   const [splitMode,setSplitMode]=useState(null);
   const [downloadTarget,setDownloadTarget]=useState(null);
+  const [micGain,setMicGain]=useState(1.0);
+  const micGainRef=useRef(1.0);
   const [tapTimes,setTapTimes]=useState([]);
   const [tapActive,setTapActive]=useState(false);
   const [previewing,setPreviewing]=useState(false);
@@ -1081,6 +1083,20 @@ function App(){
         onTap={handleTap} tapActive={tapActive} onPreview={handlePreview} previewing={previewing}
         defaultBars={defaultBars}
         onSaveDefaultBars={()=>{try{localStorage.setItem('hlr_defaultBars',bars);}catch{}setDefaultBars(bars);}}/>
+      {/* 🎤 マイク感度スライダー */}
+      <div style={{display:'flex',alignItems:'center',gap:10,
+        background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',
+        borderRadius:10,padding:'7px 14px',marginBottom:12,width:'100%',maxWidth:760}}>
+        <span style={{fontSize:10,color:'#64748b',letterSpacing:'0.08em',minWidth:52}}>🎤 感度</span>
+        <input type='range' min={0.1} max={3.0} step={0.05} value={micGain}
+          onChange={e=>{const v=Number(e.target.value);setMicGain(v);micGainRef.current=v;}}
+          style={{flex:1,accentColor:GOLD}}/>
+        <span style={{fontFamily:"'Space Mono',monospace",fontSize:12,fontWeight:700,
+          color:micGain>2?RED:GOLD,minWidth:36,textAlign:'right'}}>
+          {micGain>=2?'HIGH':micGain<=0.5?'LOW':Math.round(micGain*100)+'%'}
+        </span>
+        {micGain>2&&<span style={{fontSize:9,color:RED,fontFamily:'monospace'}}>⚠ 歪み注意</span>}
+      </div>
       <BeatDisplay beat={beat} beatOn={beatOn} countingIn={countingIn} isRecording={isRecording}
         bpm={bpm} barCount={bars} beatsDone={beatsDone} totalBeats={totalBeatsDuringRec}/>
 
